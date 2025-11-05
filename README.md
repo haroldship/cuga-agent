@@ -8,7 +8,7 @@
 
 [![Python](https://shields.io/badge/Python-3.12-blue?logo=python&style=for-the-badge)](https://www.python.org/)
 [![Status](https://shields.io/badge/Status-Active-success?logo=checkmarx&style=for-the-badge)]()
-[![Documentation](https://shields.io/badge/Documentation-Coming%20Soon-orange?logo=gitbook&style=for-the-badge)]()
+[![Documentation](https://shields.io/badge/Documentation-Available-blue?logo=gitbook&style=for-the-badge)](https://docs.cuga.dev)
 
 </div>
 
@@ -33,7 +33,7 @@
 CUGA achieves state-of-the-art performance on leading benchmarks:
 
 - 🥇 #1 on [AppWorld](https://appworld.dev/leaderboard) — a benchmark with 750 real-world tasks across 457 APIs, and
-- 🥈 #2 on [WebArena](https://docs.google.com/spreadsheets/d/1M801lEpBbKSNwP-vDBkC_pF7LdyGU1f_ufZb_NWNBZQ/edit?gid=0#gid=0) — a complex benchmark for autonomous web agents across application domains.
+- 🥈 #3 on [WebArena](https://docs.google.com/spreadsheets/d/1M801lEpBbKSNwP-vDBkC_pF7LdyGU1f_ufZb_NWNBZQ/edit?gid=0#gid=0) — a complex benchmark for autonomous web agents across application domains.
 
 #### Key features
 
