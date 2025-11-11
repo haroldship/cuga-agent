@@ -92,11 +92,9 @@ class AgentState(BaseModel):
     )  # The messages exchanged between the user and the agent
     sender: Optional[str] = ""
     previous_steps: Optional[List[NextAgentPlan]] = Field(default_factory=list)
-    previous_steps_api: Optional[List[str]] = Field(default_factory=list)
     stm_steps_history: Optional[List[str]] = Field(default_factory=list)
     stm_all_history: Optional[List[SubTaskHistory]] = Field(default_factory=list)
     next_step: Optional[str] = ""
-    variables_memory: Optional[dict] = None
     task_analyzer_output: Optional[AnalyzeTaskOutput] = None
     plan: Optional[NextAgentPlan] = None
     plan_next_agent: Optional[str] = ""

@@ -10,6 +10,7 @@ class NodeNames:
     END = "__end__"
     SUGGEST_HUMAN_ACTIONS = "SuggestHumanActions"
     REUSE_AGENT = "ReuseAgent"
+    CUGA_LITE = "CugaLite"
     API_CODE_PLANNER_AGENT = "APICodePlannerAgent"
     SHORTLISTER_AGENT = "ShortlisterAgent"
     DECOMPOSITION_AGENT = "TaskDecompositionAgent"

@@ -16,7 +16,7 @@ EvalFunction = Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]]
 EvalCoroutine = Callable[[str, dict[str, Any]], Awaitable[tuple[str, dict[str, Any]]]]
 
 
-BACKTICK_PATTERN = r"(?:^|\n)```(.*?)(?:```(?:\n|$))"
+BACKTICK_PATTERN = r"```(.*?)(?:```(?:\n|$))"
 
 
 def extract_and_combine_codeblocks(text: str) -> str:
@@ -75,6 +75,10 @@ def extract_and_combine_codeblocks(text: str) -> str:
     # Combine all codeblocks with newlines between them
     combined_code = "\n\n".join(processed_blocks)
     return combined_code
+
+
+EvalFunction = Callable[[str, dict[str, Any]], tuple[str, dict[str, Any]]]
+EvalCoroutine = Callable[[str, dict[str, Any]], Awaitable[tuple[str, dict[str, Any]]]]
 
 
 class CodeActState(MessagesState):
@@ -149,14 +153,24 @@ def create_codeact(
 
     async def call_model(state: StateSchema) -> Command:
         messages = [{"role": "system", "content": prompt}] + state["messages"]
-        response = await model.ainvoke(messages)
+        # Disable tool calling by binding no tools
+        model_without_tools = model
+        response = await model_without_tools.ainvoke(messages, config={"tool_choice": "none"})
         # Extract and combine all code blocks
-        code = extract_and_combine_codeblocks(response.content)
+        content = response.content
+        reasoning_content = response.additional_kwargs.get('reasoning_content')
+        if not content or (reasoning_content and '```python' in reasoning_content):
+            content = reasoning_content or content
+        code = extract_and_combine_codeblocks(content)
         if code:
             return Command(goto="sandbox", update={"messages": [response], "script": code})
         else:
-            # no code block, end the loop and respond to the user
-            return Command(update={"messages": [response], "script": None})
+            # No code block found - continue to generate code
+            # Add instruction to generate code
+            planning_response = response.content
+            return Command(
+                update={"messages": [{"role": "assistant", "content": planning_response}], "script": None}
+            )
 
     # If eval_fn is a async, we define async node function.
     if inspect.iscoroutinefunction(eval_fn):
@@ -167,8 +181,9 @@ def create_codeact(
             # Execute the script in the sandbox
             output, new_vars = await eval_fn(state["script"], context)
             new_context = {**existing_context, **new_vars}
+            # Return execution output as a user message so the model sees it
             return {
-                "messages": [{"role": "user", "content": output}],
+                "messages": [{"role": "user", "content": f"Execution output:\n{output}"}],
                 "context": new_context,
             }
     else:
@@ -179,8 +194,9 @@ def create_codeact(
             # Execute the script in the sandbox
             output, new_vars = eval_fn(state["script"], context)
             new_context = {**existing_context, **new_vars}
+            # Return execution output as a user message so the model sees it
             return {
-                "messages": [{"role": "user", "content": output}],
+                "messages": [{"role": "user", "content": f"Execution output:\n{output}"}],
                 "context": new_context,
             }
 

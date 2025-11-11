@@ -19,7 +19,7 @@ from cuga.backend.cuga_graph.utils.nodes_names import NodeNames
 from cuga.config import settings
 from langgraph.types import Command
 from loguru import logger
-from cuga.backend.tools_env.registry.utils.api_utils import get_apps
+from cuga.backend.tools_env.registry.utils.api_utils import get_apps, count_total_tools
 from langchain_core.messages import AIMessage
 from cuga.backend.cuga_graph.nodes.api.variables_manager.manager import VariablesManager
 
@@ -137,12 +137,51 @@ class TaskAnalyzer(BaseNode):
             print(response.json())
 
     @staticmethod
+    async def should_use_fast_mode_early(state: AgentState) -> bool:
+        """Determine if fast mode (CugaLite) should be used before any LLM calls.
+
+        Args:
+            state: Current agent state
+
+        Returns:
+            True if fast mode should be used
+        """
+        # Check if fast mode is enabled in settings
+        if settings.advanced_features.lite_mode and settings.advanced_features.mode == 'api':
+            total_tools = await count_total_tools()
+            threshold = getattr(
+                settings.advanced_features,
+                'lite_mode_tool_threshold',
+                settings.advanced_features.lite_mode_tool_threshold,
+            )
+
+            if total_tools < threshold:
+                logger.info(
+                    f"Fast mode enabled, mode is API, and total tools ({total_tools}) < threshold ({threshold}) - routing to CugaLite"
+                )
+                return True
+            else:
+                logger.info(
+                    f"Fast mode enabled but total tools ({total_tools}) >= threshold ({threshold}) - not using fast mode"
+                )
+                return False
+        return False
+
+    @staticmethod
     async def node_handler(
         state: AgentState, agent: TaskAnalyzerAgent, name: str
-    ) -> Command[Literal['TaskDecompositionAgent', 'FinalAnswerAgent']]:
+    ) -> Command[Literal['TaskDecompositionAgent', 'CugaLite', 'FinalAnswerAgent']]:
+        # if not settings.features.chat:
+        # var_manager.reset()
+        if await TaskAnalyzer.should_use_fast_mode_early(state):
+            logger.info("Fast mode enabled - checking tool threshold")
+            return Command(update=state.model_dump(), goto="CugaLite")
+
         if not settings.features.chat:
             var_manager.reset()
         if not state.sender or state.sender == "ChatAgent":
+            # Check fast mode early to skip LLM calls
+            # Normal flow - do full task analysis
             state.api_intent_relevant_apps, app_matches = await TaskAnalyzer.match_apps(
                 agent,
                 state,
@@ -223,6 +262,7 @@ class TaskAnalyzer(BaseNode):
             ):
                 logger.debug("Intent has implicit locations")
                 return Command(update=state.model_dump(), goto="LocationResolver")
+
             return Command(update=state.model_dump(), goto="TaskDecompositionAgent")
         # We arrived from LocationResolver
         if state.sender == "LocationResolver" and state.task_analyzer_output.resolved_intent:

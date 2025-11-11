@@ -69,7 +69,7 @@ def kill_processes_by_port(ports: List[int]):
         time.sleep(1)
 
 
-def wait_for_registry_server(port: int, max_retries: int = 30, retry_interval: float = 0.5):
+def wait_for_registry_server(port: int, max_retries: int = 120, retry_interval: float = 0.5):
     """
     Wait for the registry server to be ready by pinging its health endpoint.
 

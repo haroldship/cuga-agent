@@ -44,7 +44,6 @@ class ApiCoder(BaseNode):
         res = await agent.run(state)
         tracker.reload_steps(tracker.task_id)
         res_obj = CodeAgentOutput(**json.loads(res.content))
-        state.previous_steps_api.append(res_obj.summary)
         res_obj.steps_summary.extend([res_obj.summary])
         state.api_planner_history[-1].agent_output = CoderAgentHistoricalOutput(
             variables_summary=var_manager.get_variables_summary(

@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import AIMessage
 from loguru import logger
+from cuga.backend.cuga_graph.nodes.api.variables_manager.manager import VariablesManager
 
 from cuga.backend.activity_tracker.tracker import ActivityTracker
 from cuga.cli import start_extension_browser_if_configured
@@ -73,7 +74,6 @@ except ImportError as e:
 # Moved to top of file
 
 # Path constants
-
 TRACE_LOG_PATH = os.path.join(TRACES_DIR, "trace.log")
 FRONTEND_DIST_DIR = os.path.join(PACKAGE_ROOT, "..", "frontend_workspaces", "frontend", "dist")
 EXTENSION_DIR = os.path.join(PACKAGE_ROOT, "..", "frontend_workspaces", "extension", "releases", "chrome-mv3")
@@ -403,11 +403,19 @@ async def event_stream(query: str, api_mode=False, resume=None):
                         )
                         logger.debug("!!!!!!!Task is done!!!!!!!")
 
+                        # Get variables metadata from var_manager
+                        from cuga.backend.cuga_graph.nodes.api.variables_manager.manager import (
+                            VariablesManager,
+                        )
+
+                        var_manager = VariablesManager()
+                        variables_metadata = var_manager.get_all_variables_metadata()
+
                         yield StreamEvent(
                             name="Answer",
                             data=event.answer
                             if settings.advanced_features.wxo_integration
-                            else json.dumps({"data": event.answer})
+                            else json.dumps({"data": event.answer, "variables": variables_metadata})
                             if event.answer
                             else "Done.",
                         ).format(app_state.output_format, thread_id=app_state.thread_id)
@@ -614,6 +622,10 @@ async def reset_agent_state():
         app_state.stop_agent = False
         app_state.thread_id = str(uuid.uuid4())
 
+        # Reset observation and info
+        app_state.obs = None
+        app_state.info = None
+
         # Reset the agent graph
         if app_state.agent:
             app_state.agent = DynamicAgentGraph(None)
@@ -623,6 +635,9 @@ async def reset_agent_state():
         if app_state.env:
             app_state.obs, app_state.info = await app_state.env.reset()
 
+        # Reset tracker experiment if enabled
+        var_manger = VariablesManager()
+        var_manger.reset()
         logger.info("Agent state reset successfully")
         return {"status": "success", "message": "Agent state reset successfully"}
     except Exception as e:

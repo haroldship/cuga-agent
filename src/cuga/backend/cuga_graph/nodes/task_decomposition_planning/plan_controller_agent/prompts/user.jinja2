@@ -2,8 +2,14 @@
 {% for item in stm_all_history %}
 {{ loop.index }}. {{ item['sub_task'] }}
 {% for step in item['steps'] %}
-    {{ loop.index }}. {{ step }}
+        {{ loop.index }}. {{ step }}
 {% endfor %}
+{% if item['final_answer'] %}
+        **Final Answer**: {{item['final_answer']}}
+{% else %}
+        **Final Answer**: no answer is returned
+{% endif %}
+
 {% endfor %}
 
 **Variables History**:

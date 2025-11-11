@@ -242,6 +242,8 @@ class ActivityTracker(object):
         Returns:
             List[AppDefinition]: List of app definitions with tools description
         """
+
+        self.tools = {}
         logger.debug(f"tools:  {tools}")
 
         # Common prefixes to exclude (HTTP methods, etc.)
@@ -660,7 +662,7 @@ class ActivityTracker(object):
             self.to_file()
         self.prompts = []
 
-    def collect_step_external(self, step: Step, full_path: str) -> None:
+    def collect_step_external(self, step: Step, full_path: Optional[str] = None) -> None:
         """
         Collects a step and saves it to a separate log file in a directory
         specified by an environment variable.
@@ -670,12 +672,21 @@ class ActivityTracker(object):
 
         Args:
             step (Step): The Step object to collect.
+            full_path (Optional[str]): The full file path to save to. If None, the step is skipped.
+
+        TODO: Properly handle None full_path case - either provide a default path or make the
+        calling code always provide a valid path. Currently returns early if None to avoid errors.
         """
         try:
             if not settings.advanced_features.tracker_enabled:
                 return
 
-            if not full_path or not os.path.exists(os.path.dirname(full_path)):
+            # TODO: Handle None full_path properly - either use a default path or require callers to provide one
+            if not full_path:
+                logger.debug("Skipping external step collection: full_path is None")
+                return
+
+            if not os.path.exists(os.path.dirname(full_path)):
                 logger.error(
                     f"External path directory not found or does not exist: {os.path.dirname(full_path)}"
                 )

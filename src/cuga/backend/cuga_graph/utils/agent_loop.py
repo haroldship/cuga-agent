@@ -296,6 +296,9 @@ class AgentLoop:
             event_val = json.dumps(state_obj.previous_steps[-1].model_dump())
         if first_key == "ActionAgent":
             event_val = json.dumps(messages[-1].tool_calls)
+        # Override CugaLite to display as CodeAgent for consistency
+        if first_key == "CugaLite":
+            first_key = "CodeAgent"
         logger.debug("Current Agent: {}".format(list(event.keys())))
         return StreamEvent(name=str(first_key), data=event_val or "")
 
