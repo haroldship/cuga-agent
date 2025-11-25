@@ -61,9 +61,10 @@ def load_prompt_chat(system_path, relative_to_caller=True):
         parent_dir = get_caller_directory_path()
         system_path = os.path.join(parent_dir, system_path)
 
+    # Let LangChain auto-detect input_variables from the template
+    # This is required for LangChain 1.0+ which strictly validates variable names
     pmt_system = PromptTemplate.from_file(
         system_path,
-        input_variables=["variables_history"],
         template_format="jinja2",
     )
     prompt = ChatPromptTemplate(

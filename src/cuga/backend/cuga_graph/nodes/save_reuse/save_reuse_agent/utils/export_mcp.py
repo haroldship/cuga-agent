@@ -8,6 +8,7 @@ import ast
 import argparse
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
+from loguru import logger
 
 # Assuming these are in your project structure
 from cuga.backend.tools_env.code_sandbox.sandbox import get_premable
@@ -26,24 +27,41 @@ def extract_imports_and_functions_from_code(code_string: str) -> Tuple[List[Dict
         tree = ast.parse(code_string)
         functions = []
         imports = []
+        all_found_functions = []
+        skipped_functions = []
         code_lines = code_string.split('\n')
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
+        # Only get top-level function definitions, not nested ones
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                all_found_functions.append(node.name)
                 if node.name == "call_api":
+                    skipped_functions.append(node.name)
                     continue
                 # Reconstruct the function source from the original code
                 func_lines = code_lines[node.lineno - 1 : node.end_lineno]
                 func_source = '\n'.join(func_lines)
                 functions.append({'name': node.name, 'source': func_source})
+                func_type = "async" if isinstance(node, ast.AsyncFunctionDef) else "sync"
+                logger.debug(f"Extracted {func_type} function '{node.name}' ({len(func_source)} chars)")
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
                 import_lines = code_lines[node.lineno - 1 : node.end_lineno or node.lineno]
                 import_source = '\n'.join(import_lines)
                 imports.append({'source': import_source})
 
+        logger.debug(f"All top-level functions found: {all_found_functions}")
+        if skipped_functions:
+            logger.debug(f"Skipped functions: {skipped_functions}")
+        if functions:
+            logger.info(f"Extracted {len(functions)} function(s): {[f['name'] for f in functions]}")
+        else:
+            logger.error(
+                f"No extractable functions found. Top-level items: {[type(node).__name__ for node in tree.body[:10]]}"
+            )
+
         return imports, functions
     except SyntaxError as e:
-        print(f"⚠️  Syntax error in code block: {e}")
+        logger.error(f"Syntax error in code block: {e}")
         return [], []
 
 
@@ -74,7 +92,7 @@ def parse_existing_server(server_file: Path) -> Tuple[List[str], List[str], Opti
     except FileNotFoundError:
         return [], [], None
     except Exception as e:
-        print(f"⚠️  Error parsing existing server '{server_file}': {e}")
+        logger.warning(f"Error parsing existing server '{server_file}': {e}")
         return [], [], None
 
 
@@ -84,13 +102,13 @@ def validate_python_code(code_string: str) -> bool:
         ast.parse(code_string)
         return True
     except SyntaxError as e:
-        print(f"❌ Validation Error: Generated code has a syntax error: {e}")
+        logger.error(f"Validation Error: Generated code has a syntax error: {e}")
         return False
 
 
 def generate_or_update_server(
     all_functions_data: List[Dict], all_imports: List[Dict], output_file: Path, mode: str
-):
+) -> bool:
     """Generate a new server or update an existing one."""
     if mode == "create":
         # --- CREATE NEW SERVER ---
@@ -117,19 +135,19 @@ if __name__ == "__main__":
     mcp.run(transport="sse", host="127.0.0.1", port={settings.server_ports.saved_flows})
 '''
         if not validate_python_code(server_content):
-            print("❌ Aborting file creation due to syntax errors.")
-            return
+            logger.error("Aborting file creation due to syntax errors.")
+            return False
 
         output_file.write_text(server_content, encoding='utf-8')
-        print(f"✅ Generated new FastMCP server: {output_file}")
-        print(f"📋 Added {len(all_functions_data)} function(s): {[f['name'] for f in all_functions_data]}")
+        logger.info(f"Generated new FastMCP server: {output_file}")
+        logger.info(f"Added {len(all_functions_data)} function(s): {[f['name'] for f in all_functions_data]}")
+        return True
 
     else:  # --- UPDATE EXISTING SERVER ---
         existing_imports, existing_functions, existing_content = parse_existing_server(output_file)
         if existing_content is None:
-            print(f"⚠️  Could not read '{output_file}', creating a new one instead.")
-            generate_or_update_server(all_functions_data, all_imports, output_file, "create")
-            return
+            logger.warning(f"Could not read '{output_file}', creating a new one instead.")
+            return generate_or_update_server(all_functions_data, all_imports, output_file, "create")
 
         # Filter out functions and imports that already exist
         new_functions = [f for f in all_functions_data if f['name'] not in existing_functions]
@@ -141,8 +159,8 @@ if __name__ == "__main__":
         new_imports = sorted(list(set(new_imports)))  # Unique and sorted
 
         if not new_functions and not new_imports:
-            print("ℹ️  No new functions or imports to add. Server is already up-to-date.")
-            return
+            logger.info("No new functions or imports to add. Server is already up-to-date.")
+            return True  # This is still success - nothing needed updating
 
         # Prepare new code snippets
         functions_to_add = "\n".join(f"\n@mcp.tool\n{func['source']}" for func in new_functions)
@@ -176,17 +194,18 @@ if __name__ == "__main__":
 
         # Final validation before writing to disk
         if not validate_python_code(updated_content):
-            print(
-                "❌ Critical Error: The updated code is not valid Python. Aborting update to prevent corruption."
+            logger.error(
+                "Critical Error: The updated code is not valid Python. Aborting update to prevent corruption."
             )
-            return
+            return False
 
         output_file.write_text(updated_content, encoding='utf-8')
-        print(f"✅ Updated FastMCP server: {output_file}")
+        logger.info(f"Updated FastMCP server: {output_file}")
         if new_functions:
-            print(f"📋 Added {len(new_functions)} new function(s): {[f['name'] for f in new_functions]}")
+            logger.info(f"Added {len(new_functions)} new function(s): {[f['name'] for f in new_functions]}")
         if new_imports:
-            print(f"📦 Added {len(new_imports)} new import(s): {new_imports}")
+            logger.info(f"Added {len(new_imports)} new import(s): {new_imports}")
+        return True
 
 
 def process_text_file(
@@ -194,11 +213,11 @@ def process_text_file(
     output_file: Optional[Path] = None,
     mode: Optional[str] = 'auto',
     input_text: Optional[str] = None,
-):
-    """Main function to process the text file and generate/update server."""
+) -> bool:
+    """Main function to process the text file and generate/update server. Returns True on success, False on failure."""
     if mode == "auto":
         mode = "update" if output_file.exists() else "create"
-        print(f"🔄 Auto-detected mode: '{mode}'")
+        logger.debug(f"Auto-detected mode: '{mode}'")
 
     if input_text:
         content = input_text
@@ -206,31 +225,32 @@ def process_text_file(
         try:
             content = input_file.read_text(encoding='utf-8')
         except FileNotFoundError:
-            print(f"❌ Error: File '{input_file}' not found")
-            return
+            logger.error(f"Error: File '{input_file}' not found")
+            return False
     else:
-        print("❌ Error: No input file or text provided.")
-        return
+        logger.error("Error: No input file or text provided.")
+        return False
 
     code_blocks = extract_python_code_blocks(content)
     if not code_blocks:
-        print("❌ No Python code blocks found in the input.")
-        return
+        logger.error("No Python code blocks found in the input.")
+        return False
 
-    print(f"📄 Found {len(code_blocks)} Python code block(s). Processing...")
+    logger.info(f"Found {len(code_blocks)} Python code block(s). Processing...")
 
     all_functions_data, all_imports = [], []
-    for code_block in code_blocks:
+    for idx, code_block in enumerate(code_blocks):
+        logger.debug(f"Processing code block {idx + 1}/{len(code_blocks)} (length: {len(code_block)} chars)")
         imports, functions = extract_imports_and_functions_from_code(code_block)
         all_functions_data.extend(functions)
         all_imports.extend(imports)
 
     if not all_functions_data:
-        print("❌ No functions found in any code block.")
-        return
+        logger.error("No functions found in any code block.")
+        return False
 
-    print(f"\n🎯 Found {len(all_functions_data)} total function(s). Generating/updating server...")
-    generate_or_update_server(all_functions_data, all_imports, output_file, mode)
+    logger.info(f"Found {len(all_functions_data)} total function(s). Generating/updating server...")
+    return generate_or_update_server(all_functions_data, all_imports, output_file, mode)
 
 
 def main():

@@ -131,7 +131,7 @@ class ChatNode(BaseNode):
             )
             state.sender = "ChatAgentTool"
             state.last_planner_answer = var_manager.present_variable(var_name)
-            return Command(update=state.model_dump(), goto="FinalAnswerAgent")
+            return Command(update=state.model_dump(), goto=NodeNames.FINAL_ANSWER_AGENT)
 
         if (
             state.sender == NodeNames.WAIT_FOR_RESPONSE
@@ -141,7 +141,7 @@ class ChatNode(BaseNode):
             tool = ToolCall(**state.hitl_response.additional_data.tool)
             state.input = tool.get("args").get("user_task")
             state.sender = "ChatAgent"
-            return Command(update=state.model_dump(), goto="TaskAnalyzerAgent")
+            return Command(update=state.model_dump(), goto=NodeNames.TASK_ANALYZER_AGENT)
 
         # If chat feature is disabled, go directly to task analyzer
         if not settings.features.chat:

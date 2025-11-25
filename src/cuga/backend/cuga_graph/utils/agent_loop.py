@@ -295,6 +295,8 @@ class AgentLoop:
             event_val = json.dumps(state_obj.previous_steps[-1].model_dump())
         if first_key == "ActionAgent":
             event_val = json.dumps(messages[-1].tool_calls)
+        if first_key == 'ReuseAgent':
+            event_val = messages[-1].content
         # Override CugaLite to display as CodeAgent for consistency
         if first_key == "CugaLite":
             first_key = "CodeAgent"
@@ -353,6 +355,7 @@ class AgentLoop:
                 flow_generalized=True,
                 tools=msg.tool_calls,
             )
+
         if "FinalAnswerAgent" in list(event.keys()) or "CodeAgent" in list(event.keys()):
             return AgentLoopAnswer(end=True, has_tools=False, answer=state.final_answer, tools=msg.tool_calls)
         else:

@@ -120,6 +120,7 @@ class FinalAnswerNode(BaseNode):
         await FinalAnswerNode._generate_final_answer(state, agent, name)
 
         # Route based on sender (only suggest human actions if HITL is enabled)
+        # Allow save/reuse from both PlanControllerAgent (task decomposition mode) and ChatAgent (chat mode)
         if ENABLE_SAVE_REUSE and state.sender == NodeNames.PLAN_CONTROLLER_AGENT:
             state.hitl_action = create_save_reuse_action()
             state.sender = name

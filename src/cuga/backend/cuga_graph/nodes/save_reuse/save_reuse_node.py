@@ -10,6 +10,7 @@ from cuga.backend.cuga_graph.state.agent_state import AgentState
 from langchain_core.messages import AIMessage
 
 from cuga.backend.cuga_graph.nodes.save_reuse.save_reuse_agent.reuse_agent import ReuseAgent
+from cuga.backend.cuga_graph.utils.nodes_names import NodeNames
 
 tracker = ActivityTracker()
 
@@ -31,7 +32,8 @@ class SaveReuseNode(BaseNode):
             state, additional_utterance=f"Or {state.hitl_response.text_response}"
         )
         state.hitl_response = None
+        state.final_answer = res.content
         state.sender = name
         state.messages.append(AIMessage(content=json.dumps({"data": res.content})))
         tracker.collect_step(Step(name=name, data=json.dumps({"data": res.content})))
-        return Command(update=state.model_dump(), goto="__end__")
+        return Command(update=state.model_dump(), goto=NodeNames.FINAL_ANSWER_AGENT)

@@ -407,6 +407,11 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
         }
         return "I'm preparing the final answer to your request.";
       
+      case "ReuseAgent":
+        if (typeof parsedContent === "string")
+          return parsedContent.split("\n")[0];
+        return "Save and reuse operation completed."
+      
       case "SuggestHumanActions":
         if (parsedContent.action_id) {
           return "I'm waiting for your input to continue. Please review the suggested action and let me know how you'd like to proceed.";
