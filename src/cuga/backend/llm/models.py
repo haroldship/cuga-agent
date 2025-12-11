@@ -322,6 +322,8 @@ class LLMManager:
 
         OpenAI's reasoning models (o1, o3, gpt-5 series) don't support temperature parameter
         """
+        if not model_name:
+            return False
         reasoning_prefixes = ('o1', 'o3', 'gpt-5')
         return model_name.startswith(reasoning_prefixes)
 
