@@ -5,9 +5,9 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Usage: $0 [OPTION]"
     echo ""
     echo "Test runner script with multiple options:"
-    echo "  (no args)    Run registry tests only"
-    echo "  e2e_tests    Run all tests (registry + e2e system tests)"
-    echo "  simple       Run simple tests (registry + e2e without save_reuse tests)"
+    echo "  (no args)    Run default tests (registry + variables manager + local sandbox + E2B lite + e2e without save_reuse and without sandbox docker)"
+    echo "  full_tests   Run full tests (registry + e2e system tests + variables manager tests)"
+    echo "  unit_tests   Run unit tests (registry + variables manager + local sandbox tests + E2B lite tests)"
     echo "  --help, -h   Show this help message"
     echo ""
     exit 0

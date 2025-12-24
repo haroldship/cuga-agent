@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import quote
 
 from cuga.backend.activity_tracker.tracker import ActivityTracker
+from cuga.backend.tools_env.code_sandbox.e2b_sandbox import execute_code_in_e2b
 from cuga.backend.utils.id_utils import mask_with_timestamp
 from cuga.backend.cuga_graph.state.agent_state import AgentState
 
@@ -74,14 +75,30 @@ structured_tools_invocation = """
 """
 
 
-def get_premable(is_local=False, current_date=None):
+def get_premable(is_local=False, current_date=None, for_e2b=False):
     # Use configured registry_host if available, otherwise use default logic
     # If registry_host is configured, get_registry_base_url() will return it
     # Otherwise, it returns http://localhost:{port}
     registry_base = get_registry_base_url()
 
-    # Check if registry_host was explicitly configured
-    if hasattr(settings.server_ports, 'registry_host') and settings.server_ports.registry_host:
+    # For E2B: Check if function_call_host or registry_host is configured
+    # E2B runs in remote cloud and needs a publicly accessible URL
+    if for_e2b:
+        # Try function_call_host first (preferred for E2B), then registry_host
+        function_call_url = getattr(settings.server_ports, 'function_call_host', None)
+        if not function_call_url:
+            function_call_url = getattr(settings.server_ports, 'registry_host', None)
+        if not function_call_url:
+            # E2B cannot reach localhost - warn user
+            logger.error(
+                "E2B sandbox requires a publicly accessible URL. "
+                "Please set 'function_call_host' or 'registry_host' in settings.toml. "
+                "You can use ngrok or expose your registry server (port 8001) to the internet."
+            )
+            function_call_url = "http://localhost:8001"  # Will fail but at least show the issue
+        registry_host = f"{function_call_url}/functions/call?trajectory_path={quote(tracker.get_current_trajectory_path())}"
+    # Check if registry_host was explicitly configured (non-E2B)
+    elif hasattr(settings.server_ports, 'registry_host') and settings.server_ports.registry_host:
         # Use the configured registry_host directly
         registry_host = (
             f"{registry_base}/functions/call?trajectory_path={quote(tracker.get_current_trajectory_path())}"
@@ -333,25 +350,69 @@ async def run_code(
 {chr(10).join('    ' + line for line in code.split(chr(10)))}
 """
 
+    # Docker/Podman: Use asyncio.run() to execute from sync context
     wrapped_code_with_call = wrapped_code + "\nimport asyncio\nasyncio.run(__cuga_async_wrapper__())\n"
 
+    # E2B: Use async main pattern for E2B's async environment
+    wrapped_code_e2b = (
+        wrapped_code
+        + """
+async def main():
+    await __cuga_async_wrapper__()
+
+if __name__ == "__main__":
+    await main()
+"""
+    )
+
+    # Determine execution mode
+    is_e2b = settings.advanced_features.e2b_sandbox
+    is_local = settings.features.local_sandbox
+
+    logger.debug(f"Execution mode - is_e2b: {is_e2b}, is_local: {is_local}")
+
+    # Choose the right wrapper based on execution mode
+    # Priority: E2B > Local > Docker (E2B takes precedence even if local is also enabled)
+    if is_e2b:
+        wrapped_final = wrapped_code_e2b  # E2B uses async main pattern
+        logger.debug("Using E2B wrapper (async main pattern)")
+    elif is_local:
+        wrapped_final = wrapped_code  # Local uses exec() with await in namespace
+        logger.debug("Using local wrapper (no call, exec in namespace)")
+    else:
+        wrapped_final = wrapped_code_with_call  # Docker uses asyncio.run()
+        logger.debug("Using Docker wrapper (asyncio.run)")
+
     code_content = (
-        get_premable(is_local=settings.features.local_sandbox, current_date=tracker.current_date)
+        get_premable(
+            is_local=is_local or is_e2b,  # E2B also needs "local" style (not host.docker.internal)
+            current_date=tracker.current_date,
+            for_e2b=is_e2b,  # Special handling for E2B URLs
+        )
         + "\n"
         + variables
         + "\n"
-        + (wrapped_code if settings.features.local_sandbox else wrapped_code_with_call)
+        + wrapped_final
     )
 
     # Validate code after wrapping (since LLM generates code with await statements)
-    _, validation_error = validate_and_clean_code(code_content)
-    if validation_error:
-        logger.error(f"Code validation failed:\n{validation_error}")
-        logger.error(f"Original code:\n{code}")
-        return validation_error, {}
+    # Skip validation for E2B since it has top-level await which requires special compile flags
+    # E2B will validate the code when it runs it
+    if not is_e2b:
+        _, validation_error = validate_and_clean_code(code_content)
+        if validation_error:
+            logger.error(f"Code validation failed:\n{validation_error}")
+            logger.error(f"Original code:\n{code}")
+            return validation_error, {}
+    else:
+        logger.debug("Skipping validation for E2B code (has top-level await)")
 
     code_content_for_saving = (
-        get_premable(is_local=settings.features.local_sandbox, current_date=tracker.current_date)
+        get_premable(
+            is_local=is_local or is_e2b,
+            current_date=tracker.current_date,
+            for_e2b=is_e2b,
+        )
         + "\n"
         + variables
         + "\n"
@@ -364,7 +425,14 @@ async def run_code(
             f.write(code_content_for_saving)
             logger.debug(f"Wrote python file at {file_path}")
 
-    if settings.features.local_sandbox:
+    if settings.advanced_features.e2b_sandbox:
+        # Execute in E2B sandbox using the same wrapped code format as local/docker
+        result = await execute_code_in_e2b(
+            code_content=code_content,
+            thread_id=state.thread_id,
+        )
+        return result, {}
+    elif settings.features.local_sandbox:
         from cuga.backend.utils.code_generator import process_python_file
 
         result = await run_local(code_content)

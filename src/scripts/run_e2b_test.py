@@ -41,7 +41,7 @@ async def main():
         else:
             # Create E2B sandbox with the cuga-langchain template
             print("Creating E2B sandbox with 'cuga-langchain' template...")
-            sandbox = Sandbox.create("cuga-langchain")
+            sandbox = Sandbox.create()
             print("Sandbox created")
 
         try:

@@ -95,7 +95,7 @@ print(__result_locals)
     print("=" * 60)
 
     # Step 5: Execute in E2B sandbox
-    with Sandbox.create("cuga-langchain") as sandbox:
+    with Sandbox.create() as sandbox:
         execution = sandbox.run_code(complete_code)
 
         # Check for errors

@@ -7,11 +7,9 @@ Core CUGA agent that works with different tool providers through a unified inter
 import ast
 import asyncio
 import contextlib
-import inspect
 import io
 import json
 import re
-import textwrap
 import time
 import types
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,6 +21,8 @@ from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_core.prompts import PromptTemplate
 from cuga.backend.cuga_graph.state.agent_state import AgentState
 
+from cuga.backend.tools_env.code_sandbox.e2b_sandbox import execute_in_e2b_sandbox_lite
+
 try:
     from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 except ImportError:
@@ -32,23 +32,12 @@ except ImportError:
         LangfuseCallbackHandler = None
 
 from cuga.backend.cuga_graph.nodes.api.code_agent.code_act_agent import create_codeact
-from cuga.backend.cuga_graph.state.agent_state import VariablesManager
 from cuga.backend.llm.models import LLMManager
 from cuga.backend.cuga_graph.nodes.cuga_lite.tool_provider_interface import (
     ToolProviderInterface,
     AppDefinition,
 )
 from cuga.config import settings
-
-# E2B sandbox imports (optional)
-try:
-    from e2b_code_interpreter import Sandbox, Execution
-
-    E2B_AVAILABLE = True
-except ImportError:
-    E2B_AVAILABLE = False
-    Sandbox = None
-    Execution = None
 
 
 class CombinedMetricsCallback(BaseCallbackHandler):
@@ -747,274 +736,6 @@ def _filter_new_variables(all_locals: dict[str, Any], original_keys: set[str]) -
     return new_vars
 
 
-def _serialize_tools_for_e2b(locals_dict: dict[str, Any], apps_list: List[str] = None) -> str:
-    """Serialize async tool functions into Python source code for E2B.
-
-    For registry tools (HTTP-based), generates stubs that call the registry API.
-    For native Python functions, extracts and includes their source code.
-
-    Args:
-        locals_dict: Dictionary containing tool functions (key=tool_name, value=tool_func)
-        apps_list: Optional list of app names to help parse tool names correctly
-
-    Returns:
-        String of Python code defining these functions
-    """
-    lines = ["# Tool functions from previous execution"]
-
-    # Sort apps by length (longest first) for better matching
-    sorted_apps = sorted(apps_list or [], key=len, reverse=True)
-
-    for tool_name, tool_func in locals_dict.items():
-        # Skip non-functions
-        if not callable(tool_func):
-            continue
-
-        # Skip internal functions
-        if tool_name.startswith('_'):
-            continue
-
-        # Only serialize async functions (tools should be async)
-        if not asyncio.iscoroutinefunction(tool_func):
-            continue
-
-        try:
-            # Try to get the source code
-            source = inspect.getsource(tool_func)
-            dedented_source = textwrap.dedent(source)
-
-            # Check if this looks like a real Python function (not a generic wrapper)
-            # Real functions have the actual function name in their definition
-            if f"def {tool_name}" in dedented_source or f"async def {tool_name}" in dedented_source:
-                # This is a real Python function with source code, use it directly
-                lines.append(dedented_source)
-            else:
-                # This is a dynamically created wrapper (registry tool)
-                # Generate a stub using the KEY from the dict as the function name
-                logger.debug(f"Tool '{tool_name}' is a registry wrapper, generating call_api stub")
-
-                # Parse tool name to extract app_name and api_name
-                # Format: {app_name}_{rest_of_name}
-                # Try to match against known app names (sorted by length, longest first)
-                app_name_guess = "unknown"
-                for app in sorted_apps:
-                    if tool_name.startswith(app + '_'):
-                        app_name_guess = app
-                        break
-
-                # If no match found, fall back to splitting
-                if app_name_guess == "unknown":
-                    parts = tool_name.split('_', 1)
-                    if len(parts) >= 2:
-                        app_name_guess = parts[0]
-
-                api_name_guess = tool_name
-
-                # Generate stub function using **kwargs to match any call signature
-                stub = f"""async def {tool_name}(**kwargs):
-    \"\"\"Registry tool: {tool_name}\"\"\"
-    # This stub was auto-generated for registry tool
-    # Calls the registry API via call_api helper (synchronous)
-    return await call_api("{app_name_guess}", "{api_name_guess}", kwargs)
-"""
-                lines.append(stub)
-
-        except (OSError, TypeError) as e:
-            # Can't get source (likely a built-in or C function)
-            logger.debug(f"Could not get source for tool '{tool_name}': {e}")
-            # Generate a minimal stub as fallback
-            stub = f"""async def {tool_name}(*args, **kwargs):
-    \"\"\"Tool stub for {tool_name}\"\"\"
-    return await call_api("unknown", "{tool_name}", kwargs)
-"""
-            lines.append(stub)
-            continue
-
-    return "\n".join(lines) + "\n\n" if len(lines) > 1 else ""
-
-
-global_sandbox_id = None
-
-
-async def _execute_in_e2b_sandbox(
-    user_code: str,
-    context_locals: dict[str, Any] = None,
-    thread_id: str = None,
-    apps_list: List[str] = None,
-    state: Optional[Any] = None,
-) -> tuple[str, dict[str, Any]]:
-    """Execute code in E2B remote sandbox with variables and tools from context (async).
-
-    Args:
-        user_code: User's Python code (already wrapped in async function)
-        context_locals: Dictionary of variables and tools from previous execution
-        thread_id: Thread ID for sandbox caching (if None, creates ephemeral sandbox)
-        apps_list: List of app names for parsing tool names correctly
-        state: Optional AgentState instance. If provided, uses state.variables_manager.
-
-    Returns:
-        Tuple of (stdout_result, parsed_locals)
-
-    Raises:
-        RuntimeError: If E2B execution or parsing fails
-    """
-    global global_sandbox_id
-
-    if not E2B_AVAILABLE:
-        raise RuntimeError("e2b-code-interpreter package not installed")
-
-    if context_locals is None:
-        context_locals = {}
-
-    try:
-        var_manager = state.variables_manager if state is not None else VariablesManager()
-        variables_code = var_manager.get_variables_formatted()
-
-        # Serialize tool functions (callable async functions)
-        tools_code = _serialize_tools_for_e2b(context_locals, apps_list=apps_list)
-
-        # Get function_call_host for E2B (needs publicly accessible URL)
-        # Fallback: function_call_host -> registry_host -> "http://localhost:8001"
-        function_call_url = getattr(settings.server_ports, 'function_call_host', None)
-        if not function_call_url:
-            function_call_url = getattr(settings.server_ports, 'registry_host', None)
-        if not function_call_url:
-            function_call_url = "http://localhost:8001"
-
-        # Add call_api helper for registry tools (HTTP client)
-        # Note: Using regular string with .format() to avoid f-string escaping issues
-        call_api_helper = """
-# HTTP client for calling registry tools
-import asyncio
-import json
-import urllib.request
-import urllib.error
-
-async def call_api(app_name, api_name, args=None):
-    \"\"\"Call registry API tool via HTTP (synchronous).\"\"\"
-    if args is None:
-        args = {{}}
-
-    # Registry URL from CUGA settings
-    url = "{registry_url}/functions/call"
-
-    headers = {{
-        "accept": "application/json",
-        "Content-Type": "application/json"
-    }}
-    payload = {{
-        "function_name": api_name,
-        "app_name": app_name,
-        "args": args
-    }}
-
-    data = json.dumps(payload).encode('utf-8')
-    req = urllib.request.Request(url, data=data, headers=headers, method='POST')
-
-    loop = asyncio.get_event_loop()
-
-    def _sync_call():
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                response_data = response.read().decode('utf-8')
-                try:
-                    response_data = json.loads(response_data)
-                except Exception as e:
-                    pass
-                return response_data
-        except urllib.error.HTTPError as e:
-            print(e)
-            raise Exception(f"HTTP Error: {{e.code}} - {{e.reason}}")
-        except urllib.error.URLError as e:
-            print(e)
-            raise Exception(f"URL Error: {{e.reason}}")
-    
-    return await loop.run_in_executor(None, _sync_call)
-""".format(registry_url=function_call_url)
-
-        # Combine: imports + call_api + tools + variables + user code
-        complete_code = f"""
-{call_api_helper}
-{tools_code}
-{variables_code}
-{user_code}
-
-# Execute and capture locals
-async def main():
-    __result_locals = await asyncio.wait_for(__async_main(), timeout=30)
-    print("!!!===!!!")
-    print(__result_locals)
-
-if __name__ == "__main__":
-    await main()
-"""
-
-        logger.debug(f"Executing in E2B with {var_manager.get_variable_count()} variables and tools")
-
-        # Debug: Print the complete code being sent to E2B
-        print("=" * 80)
-        print("CODE SENT TO E2B SANDBOX:")
-        print("=" * 80)
-        print(complete_code)
-        print("=" * 80)
-
-        # Get or create sandbox based on thread_id
-        loop = asyncio.get_event_loop()
-        if settings.advanced_features.e2b_sandbox_mode == "per-session" and thread_id:
-            # Use cached sandbox for this thread
-            from cuga.backend.cuga_graph.nodes.cuga_lite.e2b_sandbox_cache import get_sandbox_cache
-
-            cache = get_sandbox_cache()
-            sandbox = cache.get_or_create(thread_id)
-            logger.debug(f"Executing in E2B sandbox {sandbox.sandbox_id} for thread {thread_id}")
-            execution = await loop.run_in_executor(None, sandbox.run_code, complete_code)
-        elif settings.advanced_features.e2b_sandbox_mode == "single":
-            if (
-                global_sandbox_id is None
-                or (sandbox := Sandbox.connect(global_sandbox_id))
-                and not sandbox.is_running
-            ):
-                logger.debug("Creating new global E2B sandbox")
-                sandbox = Sandbox.create("cuga-langchain")
-                global_sandbox_id = sandbox.sandbox_id
-            logger.debug(f"Executing in global E2B sandbox {sandbox.sandbox_id}")
-            execution = await loop.run_in_executor(None, sandbox.run_code, complete_code)
-        else:
-            # Create ephemeral sandbox (no caching)
-            logger.debug("Creating new ephemeral E2B sandbox")
-            with Sandbox.create("cuga-langchain") as sandbox:
-                logger.debug("Creating new ephemeral E2B sandbox")
-                execution = await loop.run_in_executor(None, sandbox.run_code, complete_code)
-
-        # Check for execution errors
-        if execution.error:
-            raise RuntimeError(f"E2B execution error: {execution.error}")
-
-        # Process stdout
-        stdout_lines = execution.logs.stdout
-        raw_data = "\n".join(map(str.strip, stdout_lines))
-        result, locals_str = raw_data.split("!!!===!!!")
-
-        # Parse locals from stdout (last line with the dict)
-        result_locals = {}
-        lines = locals_str.split('\n')
-        for line in reversed(lines):
-            if line.strip().startswith('{'):
-                try:
-                    result_locals = ast.literal_eval(line.strip())
-                    break
-                except (ValueError, SyntaxError):
-                    continue
-
-        if not result_locals:
-            logger.warning("E2B execution returned no parseable locals")
-
-        return result, result_locals
-
-    except Exception as e:
-        raise RuntimeError(f"E2B sandbox execution failed: {e}")
-
-
 async def eval_with_tools_async(
     code: str,
     _locals: dict[str, Any],
@@ -1113,172 +834,225 @@ async def __async_main():
     try:
         # Execute in E2B sandbox if enabled
         if settings.advanced_features.e2b_sandbox:
-            result, parsed_locals = await _execute_in_e2b_sandbox(
+            result, parsed_locals = await execute_in_e2b_sandbox_lite(
                 wrapped_code, context_locals=_locals, thread_id=thread_id, apps_list=apps_list, state=state
             )
             _locals.update(parsed_locals)
-            new_vars = _filter_new_variables(_locals, original_keys)
-            return result, new_vars
+        else:
+            # Local execution with restricted environment
+            with contextlib.redirect_stdout(io.StringIO()) as f:
+                # Create a restricted __import__ that only allows whitelisted modules
+                _original_import = (
+                    __builtins__['__import__'] if isinstance(__builtins__, dict) else __builtins__.__import__
+                )
 
-        # Local execution with restricted environment
-        with contextlib.redirect_stdout(io.StringIO()) as f:
-            # Create a restricted __import__ that only allows whitelisted modules
-            _original_import = (
-                __builtins__['__import__'] if isinstance(__builtins__, dict) else __builtins__.__import__
-            )
+                def restricted_import(name, globals=None, locals=_locals, fromlist=(), level=0):
+                    # Whitelist of allowed modules
+                    allowed_modules = {
+                        'asyncio',
+                        'json',
+                        'pandas',
+                        'numpy',
+                        'datetime',
+                        'math',
+                        'collections',
+                        'itertools',
+                        'functools',
+                        're',
+                        'typing',
+                    }
 
-            def restricted_import(name, globals=None, locals=_locals, fromlist=(), level=0):
-                # Whitelist of allowed modules
-                allowed_modules = {
-                    'asyncio',
-                    'json',
-                    'pandas',
-                    'numpy',
-                    'datetime',
-                    'math',
-                    'collections',
-                    'itertools',
-                    'functools',
-                    're',
-                    'typing',
+                    # Block access to dangerous modules
+                    if name.split('.')[0] not in allowed_modules:
+                        raise ImportError(
+                            f"Import of '{name}' is not allowed in restricted execution context"
+                        )
+
+                    return _original_import(name, globals, locals, fromlist, level)
+
+                # Create restricted builtins - allow only safe operations
+                # Exclude: compile, eval, exec, open, input, file operations
+                safe_builtins = {
+                    # Type constructors
+                    'dict': dict,
+                    'list': list,
+                    'tuple': tuple,
+                    'set': set,
+                    'frozenset': frozenset,
+                    'str': str,
+                    'bytes': bytes,
+                    'bytearray': bytearray,
+                    'int': int,
+                    'float': float,
+                    'bool': bool,
+                    'complex': complex,
+                    # Utilities
+                    'len': len,
+                    'range': range,
+                    'enumerate': enumerate,
+                    'zip': zip,
+                    'map': map,
+                    'filter': filter,
+                    'sorted': sorted,
+                    'reversed': reversed,
+                    'sum': sum,
+                    'min': min,
+                    'max': max,
+                    'abs': abs,
+                    'round': round,
+                    'any': any,
+                    'all': all,
+                    # String operations
+                    'chr': chr,
+                    'ord': ord,
+                    'format': format,
+                    'repr': repr,
+                    # Type checking
+                    'isinstance': isinstance,
+                    'issubclass': issubclass,
+                    'type': type,
+                    'hasattr': hasattr,
+                    'getattr': getattr,
+                    'setattr': setattr,
+                    'delattr': delattr,
+                    # Iteration
+                    'iter': iter,
+                    'next': next,
+                    'slice': slice,
+                    # Exceptions (needed for error handling)
+                    'BaseException': BaseException,
+                    'Exception': Exception,
+                    'ValueError': ValueError,
+                    'TypeError': TypeError,
+                    'KeyError': KeyError,
+                    'IndexError': IndexError,
+                    'AttributeError': AttributeError,
+                    'RuntimeError': RuntimeError,
+                    'StopIteration': StopIteration,
+                    'AssertionError': AssertionError,
+                    'ImportError': ImportError,
+                    # Other essentials
+                    'print': print,
+                    'None': None,
+                    'True': True,
+                    'False': False,
+                    'locals': locals,
+                    'vars': vars,  # Variable introspection
+                    '__name__': '__restricted__',
+                    '__build_class__': __build_class__,
+                    '__import__': restricted_import,  # Restricted import
                 }
 
-                # Block access to dangerous modules
-                if name.split('.')[0] not in allowed_modules:
-                    raise ImportError(f"Import of '{name}' is not allowed in restricted execution context")
+                # Create restricted globals with limited module access
+                # os, sys, subprocess, and other dangerous modules are completely excluded
+                restricted_globals = {
+                    "__builtins__": safe_builtins,
+                    "asyncio": asyncio,  # Needed for async execution
+                    "json": json,  # Commonly needed for tool calls
+                }
 
-                return _original_import(name, globals, locals, fromlist, level)
+                # Add pandas if available
+                try:
+                    import pandas as pd
 
-            # Create restricted builtins - allow only safe operations
-            # Exclude: compile, eval, exec, open, input, file operations
-            safe_builtins = {
-                # Type constructors
-                'dict': dict,
-                'list': list,
-                'tuple': tuple,
-                'set': set,
-                'frozenset': frozenset,
-                'str': str,
-                'bytes': bytes,
-                'bytearray': bytearray,
-                'int': int,
-                'float': float,
-                'bool': bool,
-                'complex': complex,
-                # Utilities
-                'len': len,
-                'range': range,
-                'enumerate': enumerate,
-                'zip': zip,
-                'map': map,
-                'filter': filter,
-                'sorted': sorted,
-                'reversed': reversed,
-                'sum': sum,
-                'min': min,
-                'max': max,
-                'abs': abs,
-                'round': round,
-                'any': any,
-                'all': all,
-                # String operations
-                'chr': chr,
-                'ord': ord,
-                'format': format,
-                'repr': repr,
-                # Type checking
-                'isinstance': isinstance,
-                'issubclass': issubclass,
-                'type': type,
-                'hasattr': hasattr,
-                'getattr': getattr,
-                'setattr': setattr,
-                'delattr': delattr,
-                # Iteration
-                'iter': iter,
-                'next': next,
-                'slice': slice,
-                # Exceptions (needed for error handling)
-                'BaseException': BaseException,
-                'Exception': Exception,
-                'ValueError': ValueError,
-                'TypeError': TypeError,
-                'KeyError': KeyError,
-                'IndexError': IndexError,
-                'AttributeError': AttributeError,
-                'RuntimeError': RuntimeError,
-                'StopIteration': StopIteration,
-                'AssertionError': AssertionError,
-                'ImportError': ImportError,
-                # Other essentials
-                'print': print,
-                'None': None,
-                'True': True,
-                'False': False,
-                'locals': locals,
-                'vars': vars,  # Variable introspection
-                '__name__': '__restricted__',
-                '__build_class__': __build_class__,
-                '__import__': restricted_import,  # Restricted import
-            }
+                    restricted_globals["pd"] = pd
+                    restricted_globals["pandas"] = pd
+                except ImportError:
+                    pass  # pandas not installed, skip
 
-            # Create restricted globals with limited module access
-            # os, sys, subprocess, and other dangerous modules are completely excluded
-            restricted_globals = {
-                "__builtins__": safe_builtins,
-                "asyncio": asyncio,  # Needed for async execution
-                "json": json,  # Commonly needed for tool calls
-            }
+                # Add tool functions from _locals (these are the callable tools)
+                # Filter out any dangerous modules that might have been passed in _locals
+                dangerous_module_names = {
+                    'os',
+                    'sys',
+                    'subprocess',
+                    'pathlib',
+                    'shutil',
+                    'glob',
+                    'importlib',
+                    '__import__',
+                    'eval',
+                    'exec',
+                    'compile',
+                }
 
-            # Add pandas if available
-            try:
-                import pandas as pd
+                # Handle StructuredTool objects - extract their .func attribute for local execution
+                # This is needed because tools_context now passes full StructuredTool objects
+                # to preserve args_schema for E2B sandbox stub generation
+                from langchain_core.tools import StructuredTool
 
-                restricted_globals["pd"] = pd
-                restricted_globals["pandas"] = pd
-            except ImportError:
-                pass  # pandas not installed, skip
+                safe_locals = {}
+                for k, v in _locals.items():
+                    if k in dangerous_module_names:
+                        continue
+                    # If it's a StructuredTool, extract the underlying function
+                    if isinstance(v, StructuredTool):
+                        safe_locals[k] = v.func
+                    else:
+                        safe_locals[k] = v
 
-            # Add tool functions from _locals (these are the callable tools)
-            # Filter out any dangerous modules that might have been passed in _locals
-            dangerous_module_names = {
-                'os',
-                'sys',
-                'subprocess',
-                'pathlib',
-                'shutil',
-                'glob',
-                'importlib',
-                '__import__',
-                'eval',
-                'exec',
-                'compile',
-            }
-            safe_locals = {k: v for k, v in _locals.items() if k not in dangerous_module_names}
+                # Merge tools and variables into restricted_globals so they're accessible
+                # to the async function when it runs
+                restricted_globals.update(safe_locals)
 
-            # Merge tools and variables into restricted_globals so they're accessible
-            # to the async function when it runs
-            restricted_globals.update(safe_locals)
+                # Debug: Build complete execution context string for logging (does not affect execution)
+                debug_lines = []
+                debug_lines.append("# Available imports:")
+                debug_lines.append("import asyncio")
+                debug_lines.append("import json")
+                if "pandas" in restricted_globals:
+                    debug_lines.append("import pandas as pd")
+                debug_lines.append("")
 
-            # Safety check: Ensure no dangerous modules leaked into the execution environment
-            assert 'os' not in restricted_globals, "Security violation: os module in restricted_globals!"
-            assert 'sys' not in restricted_globals, "Security violation: sys module in restricted_globals!"
-            assert 'subprocess' not in restricted_globals, (
-                "Security violation: subprocess in restricted_globals!"
-            )
+                tool_names = [k for k, v in safe_locals.items() if callable(v)]
+                if tool_names:
+                    debug_lines.append(f"# Available tools ({len(tool_names)}):")
+                    for tool_name in sorted(tool_names):
+                        debug_lines.append(f"# - {tool_name}")
+                    debug_lines.append("")
 
-            # Create a namespace for exec to populate with local definitions
-            exec_locals = {}
-            exec(wrapped_code, restricted_globals, exec_locals)
+                var_names = [k for k, v in safe_locals.items() if not callable(v)]
+                if var_names:
+                    debug_lines.append(f"# Available variables ({len(var_names)}):")
+                    for var_name in sorted(var_names):
+                        debug_lines.append(f"# - {var_name} = {repr(safe_locals[var_name])[:100]}")
+                    debug_lines.append("")
 
-            # Get and run the async function (it's now in exec_locals)
-            async_main = exec_locals['__async_main']
-            result_locals = await asyncio.wait_for(async_main(), timeout=30)
-            _locals.update(result_locals)
+                debug_lines.append(wrapped_code.rstrip())
+                debug_lines.append("")
+                debug_lines.append("# Actual execution (not shown above):")
+                debug_lines.append("# exec(wrapped_code, restricted_globals, exec_locals)")
+                debug_lines.append("# async_main = exec_locals['__async_main']")
+                debug_lines.append("# result_locals = await asyncio.wait_for(async_main(), timeout=30)")
 
-        result = f.getvalue()
-        if not result:
-            result = "<code ran, no output printed to stdout>"
+                complete_debug_output = "\n".join(debug_lines)
+                logger.info("=" * 80)
+                logger.info("CODE EXECUTED IN LOCAL SANDBOX:")
+                logger.info("=" * 80)
+                logger.info(complete_debug_output)
+                logger.info("=" * 80)
+
+                # Safety check: Ensure no dangerous modules leaked into the execution environment
+                assert 'os' not in restricted_globals, "Security violation: os module in restricted_globals!"
+                assert 'sys' not in restricted_globals, (
+                    "Security violation: sys module in restricted_globals!"
+                )
+                assert 'subprocess' not in restricted_globals, (
+                    "Security violation: subprocess in restricted_globals!"
+                )
+
+                # Create a namespace for exec to populate with local definitions
+                exec_locals = {}
+                exec(wrapped_code, restricted_globals, exec_locals)
+
+                # Get and run the async function (it's now in exec_locals)
+                async_main = exec_locals['__async_main']
+                result_locals = await asyncio.wait_for(async_main(), timeout=30)
+                _locals.update(result_locals)
+
+            result = f.getvalue()
+            if not result:
+                result = "<code ran, no output printed to stdout>"
 
     except asyncio.TimeoutError:
         result = "Error during execution: Execution timed out after 30 seconds"
