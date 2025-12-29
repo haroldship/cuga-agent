@@ -73,7 +73,7 @@ if [ "$1" = "unit_tests" ]; then
     echo "✅ All unit tests passed!"
     exit 0
 else
-    echo "Running default tests (registry + variables manager + local sandbox + E2B lite + e2e + memory + stability)..."
+    echo "Running default tests (registry + variables manager + local sandbox + E2B lite + SDK integration + e2e + memory + stability)..."
     run_pytest ./src/cuga/backend/tools_env/registry/tests/
     run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
     run_pytest ./src/system_tests/e2e/test_runtime_tools.py
@@ -82,6 +82,8 @@ else
     run_pytest ./src/system_tests/unit/test_sandbox_async.py
     run_pytest ./src/cuga/backend/cuga_graph/nodes/api/code_agent/test_extract_codeblocks.py
     run_pytest ./src/system_tests/unit/test_variable_creation_order.py
+    echo "Running SDK integration tests..."
+    run_pytest ./tests/integration/test_sdk_integration.py
     # run_pytest_with_memory ./src/system_tests/e2e/test_memory_integration.py
     # run_pytest_with_memory ./src/system_tests/e2e/balanced_test_memory.py
     echo "Running stability tests..."

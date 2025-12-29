@@ -17,6 +17,7 @@ Building a domain-specific enterprise agent from scratch is complex and requires
 [![🦉🤗 Try CUGA Live on Hugging Face Spaces](https://img.shields.io/badge/🦉🤗_Try_CUGA_Live_on_Hugging_Face_Spaces-FFD21E?style=for-the-badge)](https://huggingface.co/spaces/ibm-research/cuga-agent)
 
 [![Python](https://shields.io/badge/Python-3.12-blue?logo=python&style=for-the-badge)](https://www.python.org/)
+[![CugaAgent SDK](https://shields.io/badge/CugaAgent_SDK-Documentation-blue?logo=python&style=for-the-badge)](https://docs.cuga.dev/docs/sdk/cuga_agent/)
 [![Status](https://shields.io/badge/Status-Active-success?logo=checkmarx&style=for-the-badge)]()
 [![Documentation](https://shields.io/badge/Documentation-Available-blue?logo=gitbook&style=for-the-badge)](https://docs.cuga.dev)
 [![Discord](https://shields.io/badge/Discord-Join-blue?logo=discord&style=for-the-badge)](https://discord.gg/aH6rAEEW)
@@ -206,6 +207,42 @@ cuga viz
 # agent execution trajectories, decision-making, and tool usage
 
 ```
+
+## 📦 Using CUGA as a Python SDK
+
+CUGA can be easily integrated into your Python applications as a library. The SDK provides a clean, minimal API for creating and invoking agents with custom tools.
+
+### Quick Start
+
+```python
+from cuga import CugaAgent
+from langchain_core.tools import tool
+
+@tool
+def add_numbers(a: int, b: int) -> int:
+    '''Add two numbers together'''
+    return a + b
+
+# Create and invoke the agent
+agent = CugaAgent(tools=[add_numbers])
+result = await agent.invoke("What is 10 + 5?")
+print(result)  # "15"
+```
+
+### Key Features
+
+- **Simple API**: `CugaAgent(tools=[...])` → `await agent.invoke(message)`
+- **Streaming**: Monitor execution in real-time with `agent.stream()`
+- **State Isolation**: Per-user sessions with `thread_id`
+- **LangGraph Integration**: Access underlying graph for advanced use cases
+- **Flexible Tools**: Direct tools or custom tool providers
+
+### More Examples
+
+- [Basic Usage](docs/examples/sdk_basic_usage.py) - Common patterns and use cases
+- [Streaming](docs/examples/sdk_streaming_example.py) - Real-time execution monitoring
+- [LangGraph Integration](docs/examples/sdk_langgraph_integration.py) - Advanced graph usage
+- [Integration Tests](tests/integration/test_sdk_integration.py) - Full test suite (16 passing tests)
 
 <details>
 <summary>🤖 LLM Configuration - Advanced Options</summary>
