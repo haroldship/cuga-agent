@@ -4,6 +4,7 @@ from loguru import logger
 from cuga.backend.activity_tracker.tracker import ActivityTracker
 from cuga.backend.cuga_graph.utils.nodes_names import NodeNames
 from cuga.configurations.set_from_one_file import parse_markdown_sections
+from cuga.config import settings
 
 root_dir = Path(__file__).parent.parent.absolute()
 
@@ -249,6 +250,13 @@ class InstructionsManager:
         if res.plan:
             resolved_key = self._resolve_key('api_planner')
             # Normalize to uppercase to match get_all_instruction_keys() output
+            if resolved_key:
+                self._in_memory_cache[resolved_key.upper()] = res.plan
+        if not settings.advanced_features.lite_mode:
+            resolved_key = self._resolve_key('code_agent')
+            if resolved_key:
+                self._in_memory_cache[resolved_key.upper()] = res.plan
+            resolved_key = self._resolve_key('api_code_planner')
             if resolved_key:
                 self._in_memory_cache[resolved_key.upper()] = res.plan
 

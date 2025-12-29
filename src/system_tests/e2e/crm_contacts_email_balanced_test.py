@@ -28,7 +28,7 @@ class TestCRMContactsEmailWorkflowBalanced(BaseCRMTestServerStream):
         self.thread_id = str(uuid.uuid4())
         print(f"\n=== Test thread ID: {self.thread_id} ===")
 
-    async def test_crm_contacts_write_and_email(self):
+    async def test_crm_contacts_write_and_email_balanced(self):
         """Test CRM contacts query with file writing and email sending."""
         print(f"Running test with thread ID: {self.thread_id}")
 
@@ -38,8 +38,7 @@ Given the list of emails in contacts.txt, check which of these exist as contacts
 In addition send an email to my assistant requesting to schedule meetings with the 2 top accounts by annual revenue from these registered accounts.  Title of the email is "IMPORTANT - Please schedule meetings at the conference"). List the top 2 accounts by revenue and their contact details, but do not use attachments, and don't forget in the beginning of the email to explain all the steps you took."""
 
         all_events = await self.run_task(query, thread_id=self.thread_id)
-
-        # Validate ground truth expectations
+        await asyncio.sleep(10)
         self._assert_answer_event(
             all_events,
             expected_keywords=[
@@ -49,11 +48,6 @@ In addition send an email to my assistant requesting to schedule meetings with t
                 "sigma",
             ],
         )
-
-        # Sleep to allow traces to be saved
-        print("\n--- Sleeping for 10 seconds to allow traces to save ---")
-        await asyncio.sleep(10)
-        print("--- Sleep complete ---")
 
 
 if __name__ == "__main__":

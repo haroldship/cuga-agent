@@ -44,6 +44,12 @@ from cuga.backend.cuga_graph.nodes.task_decomposition_planning.task_decompositio
     TaskDecompositionAgent,
 )
 from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_lite_node import CugaLiteNode
+from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_lite_graph import (
+    create_cuga_lite_graph,
+)
+from cuga.backend.cuga_graph.nodes.cuga_lite.combined_tool_provider import CombinedToolProvider
+from cuga.backend.llm.models import LLMManager
+from cuga.config import settings
 
 
 class DynamicAgentGraph:
@@ -65,6 +71,7 @@ class DynamicAgentGraph:
         self.api_shortlister = ApiShortlister(ShortlisterAgent.create())
         self.api_coder = ApiCoder(CodeAgent.create())
         self.cuga_lite = CugaLiteNode(langfuse_handler=langfuse_handler)
+        self.langfuse_handler = langfuse_handler
         self.graph = None
 
     async def build_graph(self):
@@ -100,7 +107,39 @@ class DynamicAgentGraph:
         graph.add_node(self.api_shortlister.agent.name, self.api_shortlister.node)
         graph.add_node(self.api_coder.agent.name, self.api_coder.node)
         graph.add_node(self.api_planner.agent.name, self.api_planner.node)
+
+        # Add CugaLite entry node
         graph.add_node(self.cuga_lite.name, self.cuga_lite.node)
+
+        # Create and add CugaLite subgraph
+        tool_provider = CombinedToolProvider()
+        await tool_provider.initialize()
+
+        # Get apps for apps_list
+        apps = await tool_provider.get_apps()
+        apps_list = [app.name for app in apps] if apps else None
+
+        # Initialize LLM
+        llm_manager = LLMManager()
+        model_config = settings.agent.code.model.copy()
+        model_config["streaming"] = False
+        model = llm_manager.get_model(model_config)
+
+        # Create the CugaLite subgraph (tools will be fetched dynamically from tool_provider)
+        cuga_lite_subgraph = create_cuga_lite_graph(
+            model=model,
+            prompt=None,  # Will be created dynamically from state
+            tool_provider=tool_provider,
+            apps_list=apps_list,
+            callbacks=[self.langfuse_handler] if self.langfuse_handler else None,
+        )
+
+        # Compile and add as a subgraph node
+        compiled_cuga_lite_subgraph = cuga_lite_subgraph.compile()
+        graph.add_node("CugaLiteSubgraph", compiled_cuga_lite_subgraph)
+
+        # Add callback node to process results after subgraph
+        graph.add_node("CugaLiteCallback", self.cuga_lite.callback_node)
 
     def add_edges(self, graph):
         graph.add_edge(START, self.chat.chat_agent.name)
@@ -112,5 +151,6 @@ class DynamicAgentGraph:
         graph.add_edge(self.qa.qa_agent.name, self.planner.browser_planner_agent.name)
         graph.add_edge(self.final_answer_agent.final_answer_agent.name, END)
         graph.add_edge(self.action_agent.action_agent.name, self.planner.browser_planner_agent.name)
-        # CugaLite edge - goes directly to FinalAnswerAgent on success
-        # (CugaLite node handles fallback internally if it fails)
+
+        # CugaLite subgraph flow: CugaLiteSubgraph -> CugaLiteCallback
+        graph.add_edge("CugaLiteSubgraph", "CugaLiteCallback")

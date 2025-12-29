@@ -14,6 +14,17 @@ cases = [
     "TestCRMContactsEmailWorkflow::test_crm_contacts_write_and_email"
 ]
 
+[[skip_stability.tests]]
+file = "src/system_tests/e2e/crm_contacts_email_balanced_test.py"
+cases = [
+    "TestCRMContactsEmailWorkflowBalanced::test_crm_contacts_write_and_email_balanced"
+]
+
+[[stability.tests]]
+file = "src/system_tests/e2e/crm_contacts_email_test_find_tools.py"
+cases = [
+    "TestCRMContactsEmailWorkflowFindTools::test_crm_contacts_write_and_email_find_tools"
+]
 
 [[stability.tests]]
 file = "src/system_tests/e2e/crm_hf_utterances_test.py"

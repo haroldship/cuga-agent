@@ -13,6 +13,7 @@ import json
 import glob
 from pathlib import Path
 import platform
+from cuga.config import settings as cuga_settings
 
 # Set UTF-8 encoding for stdout/stderr on Windows to handle Unicode characters
 if platform.system() == "Windows":
@@ -222,16 +223,43 @@ def kill_process_on_port(port):
         except Exception as e:
             print(f"  Warning: Could not kill process on port {port}: {e}")
     else:
-        # Unix/Linux: use lsof
+        # Unix/Linux: try lsof first, fallback to fuser or ss
         try:
             result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, check=False)
 
-            if result.stdout.strip():
+            if result.returncode == 0 and result.stdout.strip():
                 pids = result.stdout.strip().split('\n')
                 for pid in pids:
                     if pid:
                         print(f"  Killing process {pid} on port {port}")
                         subprocess.run(["kill", "-9", pid], check=False)
+        except FileNotFoundError:
+            # lsof not available, try fuser
+            try:
+                result = subprocess.run(
+                    ["fuser", "-k", f"{port}/tcp"], capture_output=True, text=True, check=False
+                )
+                if result.returncode == 0:
+                    print(f"  Killed process on port {port} using fuser")
+            except FileNotFoundError:
+                # fuser not available either, try ss + kill
+                try:
+                    result = subprocess.run(
+                        ["ss", "-lptn", f"sport = :{port}"], capture_output=True, text=True, check=False
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        import re
+
+                        for line in result.stdout.split('\n'):
+                            match = re.search(r'pid=(\d+)', line)
+                            if match:
+                                pid = match.group(1)
+                                print(f"  Killing process {pid} on port {port}")
+                                subprocess.run(["kill", "-9", pid], check=False)
+                except FileNotFoundError:
+                    print(
+                        f"  Warning: No port killing tool available (lsof/fuser/ss). Port {port} may still be in use."
+                    )
         except Exception as e:
             print(f"  Warning: Could not kill process on port {port}: {e}")
 
@@ -251,14 +279,20 @@ def cleanup_ports(env_ports):
     print("--- Port cleanup complete ---")
 
 
-def run_local_test(test_full_path, run_timestamp):
+def run_local_test(test_full_path, run_timestamp, e2b_mode=False):
     """Run a single test case locally with dynamic port allocation."""
 
     safe_test_name = test_full_path.replace("/", "_").replace(":", "_").replace(".", "_")
     print(f"\n--- Running Local Test: {test_full_path} ---")
 
     # Allocate ports
-    env_ports = port_manager.allocate_ports()
+    if e2b_mode:
+        # In e2b mode, use fixed port 8001 for registry, allocate others dynamically
+        env_ports = port_manager.allocate_ports()
+        env_ports["DYNACONF_SERVER_PORTS__REGISTRY"] = "8001"
+        print("E2B mode: Using fixed port 8001 for registry")
+    else:
+        env_ports = port_manager.allocate_ports()
     print(f"Allocated ports for {safe_test_name}: {env_ports}")
 
     # Create unique CRM DB path for this test
@@ -291,11 +325,11 @@ def run_local_test(test_full_path, run_timestamp):
     return success
 
 
-def run_test_wrapper(method, test_full_path, run_timestamp):
+def run_test_wrapper(method, test_full_path, run_timestamp, e2b_mode=False):
     if method == "docker":
         return run_docker_test(test_full_path, run_timestamp)
     else:
-        return run_local_test(test_full_path, run_timestamp)
+        return run_local_test(test_full_path, run_timestamp, e2b_mode=e2b_mode)
 
 
 def generate_summary_report(results_dir: str = "test-results"):
@@ -493,6 +527,11 @@ def main():
         default="test-results",
         help="Directory containing test result JSON files (for --generate-summary).",
     )
+    parser.add_argument(
+        "--e2b",
+        action="store_true",
+        help="E2B mode: use fixed port 8001 for registry, run local without parallel.",
+    )
     args = parser.parse_args()
 
     if args.generate_summary:
@@ -538,6 +577,22 @@ def main():
 
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"Run Timestamp (ID): {run_timestamp}")
+
+    # E2B mode overrides method and parallel settings
+    if args.e2b:
+        # validate that e2b api key available and settings.server_ports.function_call_host is set
+        if not os.getenv("E2B_API_KEY"):
+            print("Error: E2B_API_KEY not found in environment")
+            sys.exit(1)
+        if not cuga_settings.server_ports.function_call_host:
+            print("Error: settings.server_ports.function_call_host not found in settings.toml")
+            sys.exit(1)
+        # set e2b mode to be enabled
+        os.environ["DYNACONF_ADVANCED_FEATURES__E2B_SANDBOX"] = "true"
+        args.method = "local"
+        args.parallel = False
+        print("E2B mode enabled: forcing local execution without parallel")
+
     print(f"Method: {args.method}")
 
     results = []
@@ -577,7 +632,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tests
             future_to_test = {
-                executor.submit(run_test_wrapper, args.method, target, run_timestamp): target
+                executor.submit(run_test_wrapper, args.method, target, run_timestamp, args.e2b): target
                 for target in test_targets
             }
 
@@ -592,7 +647,7 @@ def main():
     else:
         print(f"Running {len(test_targets)} tests sequentially...")
         for target in test_targets:
-            success = run_test_wrapper(args.method, target, run_timestamp)
+            success = run_test_wrapper(args.method, target, run_timestamp, e2b_mode=args.e2b)
             results.append((target, success))
 
     print("\n\n=== Test Summary ===")

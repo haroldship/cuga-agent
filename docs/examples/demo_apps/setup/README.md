@@ -5,6 +5,7 @@
 uvx --from git+https://github.com/cuga-project/cuga-agent.git#subdirectory=docs/examples/demo_apps/setup create-cuga-demo [--cache] [--local]
 ```
 
+    
 ## Local Development
 ```bash
 uv run create-cuga-demo [--cache] [--local]

@@ -10,7 +10,13 @@ class TestCRMContactsEmailWorkflow(BaseCRMTestServerStream):
     """
     Test class for CRM follow-up queries with file writing and email sending.
     Tests the flow of querying contacts.txt, retrieving CRM details, writing to file, and sending email.
+    Doesnt use find tools feature.
     """
+
+    test_env_vars = {
+        "DYNACONF_ADVANCED_FEATURES__SHORTLISTING_TOOL_THRESHOLD": "100",
+        "DYNACONF_ADVANCED_FEATURES__LITE_MODE_TOOL_THRESHOLD": "25",
+    }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -35,6 +41,8 @@ In addition send an email to my assistant requesting to schedule meetings with t
         all_events = await self.run_task(query, thread_id=self.thread_id)
 
         # Validate ground truth expectations
+        await asyncio.sleep(10)
+        print("--- Sleep complete ---")
         self._assert_answer_event(
             all_events,
             expected_keywords=[
@@ -44,11 +52,6 @@ In addition send an email to my assistant requesting to schedule meetings with t
                 "sigma",
             ],
         )
-
-        # Sleep to allow traces to be saved
-        print("\n--- Sleeping for 10 seconds to allow traces to save ---")
-        await asyncio.sleep(10)
-        print("--- Sleep complete ---")
 
 
 if __name__ == "__main__":

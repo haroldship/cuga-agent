@@ -11,7 +11,7 @@ from cuga.backend.cuga_graph.state.agent_state import AgentState
 from cuga.backend.llm.models import LLMManager
 from cuga.backend.llm.utils.helpers import load_prompt_simple
 from cuga.config import settings
-from cuga.backend.tools_env.code_sandbox.sandbox import run_code
+from cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor import CodeExecutor
 from loguru import logger
 from cuga.configurations.instructions_manager import InstructionsManager
 
@@ -183,14 +183,17 @@ class CodeAgent(BaseAgent):
         code = self.extract_code_from_response(response.content)
         logger.debug(f"Generated code: {code}")
 
-        # Run code in sandbox
+        # Run code using CodeExecutor (mode determined by settings)
         try:
-            execution_output, _ = await run_code(code, state=input_variables)
+            execution_output, _ = await CodeExecutor.eval_for_code_agent(
+                code=code,
+                state=input_variables,
+            )
         except Exception as e:
             logger.error(f"Error running code: {e}")
             execution_output = str(e)
 
-        # Process the output
+        # Process the output - extract JSON from last line
         out, remaining_text = self.get_last_nonempty_line(execution_output, limit=5)
         steps_summary = []
         if out:

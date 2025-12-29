@@ -153,7 +153,11 @@ class VariablesManager(object):
                     self.variable_counter = num
 
             if name in self.variables:
-                is_new = False
+                suffix = 1
+                base_name = name
+                while f"{base_name}_{suffix}" in self.variables:
+                    suffix += 1
+                name = f"{base_name}_{suffix}"
 
         self.variables[name] = VariableMetadata(value, description)
 
@@ -869,11 +873,6 @@ class StateVariablesManager(VariablesManager):
             return False
 
 
-class Prediction(BaseModel):
-    action: str
-    args: Optional[List[str]]
-
-
 def default_state(page, observation, goal, chat_messages=None):
     return AgentState(
         input=goal, url=page.url if page else "", chat_messages=chat_messages if chat_messages else []
@@ -894,7 +893,6 @@ class AnalyzeTaskAppsOutput(BaseModel):
 
 
 class AgentState(BaseModel):
-    next: Optional[str] = ""  # The 'next' field indicates where to route to next
     # pages: Annotated[Sequence[str], operator.add]  # List of pages traversed
     # page: Page  # The Playwright web page lets us interact with the web environment
     user_id: Optional[str] = "default"  # TODO: this should be updated in multi user scenario
@@ -917,9 +915,7 @@ class AgentState(BaseModel):
     coder_task: Optional[str] = None
     coder_variables: Optional[List[str]] = None
     coder_relevant_apis: Optional[list[ApiDescription]] = None
-    api_planner_codeagent_filtered_schemas: Optional[str] = None
     api_planner_codeagent_plan: Optional[str] = None
-    api_app_schema_map: Optional[Dict] = None
     api_shortlister_planner_filtered_apis: Optional[str] = None
     api_shortlister_all_filtered_apis: Optional[dict] = None
     sub_task: Optional[str] = None
@@ -933,14 +929,10 @@ class AgentState(BaseModel):
     final_answer: Optional[str] = ""
     task_decomposition: Optional[TaskDecompositionPlan] = None
     sub_tasks_progress: Optional[List[str]] = Field(default_factory=list)
-    prediction: Optional[Prediction] = None  # The Agent's output
     feedback: Optional[List[Dict]] = Field(default_factory=list)
     # A system message (or messages) containing the intermediate steps]
     sites: Optional[List[str]] = None
-    scratchpad: Optional[List[BaseMessage]] = Field(default_factory=list)
     observation: Optional[str] = ""  # The most recent response from a tool
-    annotations: Optional[List[str]] = Field(default_factory=list)  # Annotations for the current page
-    actions: Optional[str] = ""  # The chosen actions
     url: str  # The URL of the current page
     elements_as_string: Optional[str] = ""
     focused_element_bid: Optional[str] = None
@@ -963,6 +955,9 @@ class AgentState(BaseModel):
     read_page: Optional[str] = ""  # The outer text of the page
     env_policy: List[dict] = Field(default_factory=list)
     tool_call: Optional[dict] = None
+    cuga_lite_metadata: Optional[Dict[str, Any]] = Field(
+        default_factory=dict
+    )  # Metadata for CugaLite subgraph execution
 
     @property
     def variables_manager(self) -> 'StateVariablesManager':

@@ -17,7 +17,7 @@ def create_account(account: AccountCreate, db: Session = Depends(get_db)):
 @router.get("/", response_model=PaginatedResponse[AccountResponse])
 def get_accounts(
     skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=5),
+    limit: int = Query(300, ge=1, le=300),
     state: Optional[str] = Query(None, description="Filter accounts by state"),
     db: Session = Depends(get_db),
 ):

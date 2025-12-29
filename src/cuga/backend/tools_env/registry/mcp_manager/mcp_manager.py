@@ -511,8 +511,6 @@ class MCPManager:
                 if isinstance(tool, dict) and 'function' in tool:
                     func = tool['function']
                     tool_name = func.get('name', '')
-                    # Create the standardized API format
-
                     api_info = {
                         "app_name": app_name,
                         "secure": False,  # MCP servers are generally not secure by default

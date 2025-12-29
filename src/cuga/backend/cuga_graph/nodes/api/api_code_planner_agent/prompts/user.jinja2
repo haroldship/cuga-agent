@@ -1,5 +1,12 @@
 * **User Goal:** {{coder_task}}
 
+{% if instructions -%}
+
+## Special Instructions
+{{ instructions }}
+
+{%- endif %}
+
 * **Relevant variables from history**:
 """
 {{variables_preview}}

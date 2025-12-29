@@ -2,7 +2,8 @@ import os
 import subprocess
 import asyncio
 
-from cuga.backend.tools_env.code_sandbox.sandbox import run_code
+from cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor import CodeExecutor
+from cuga.backend.cuga_graph.state.agent_state import AgentState
 from cuga.config import settings, PACKAGE_ROOT
 from cuga.backend.activity_tracker.tracker import ActivityTracker
 from loguru import logger
@@ -116,12 +117,24 @@ async def _test_sandbox_async(remote: bool = False):
     if remote:
         os.environ["DYNACONF_FEATURES__LOCAL_SANDBOX"] = "false"
         logger.info("Testing with remote sandbox (Docker/Podman)...")
+        mode = 'docker'
     else:
         os.environ["DYNACONF_FEATURES__LOCAL_SANDBOX"] = "true"
         logger.info("Testing with local sandbox...")
+        mode = 'local'
 
-    res = await run_code("print('test succeeded')")
-    logger.info(res)
+    # Create a simple state for testing
+    state = AgentState(input="test", url="")
+
+    # Use CodeExecutor instead of deprecated run_code
+    code = "print('test succeeded')"
+    result, _ = await CodeExecutor.eval_with_tools_async(
+        code=code,
+        _locals={},
+        state=state,
+        mode=mode,
+    )
+    logger.info(result)
 
 
 def test_sandbox(remote: bool = False):

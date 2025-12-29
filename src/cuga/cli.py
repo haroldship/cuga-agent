@@ -672,7 +672,11 @@ def start(
                     logger.info(f"   • {file_path}")
 
             # Set hardcoded policies for demo_crm
-            policies_content = "## Plan\nwhen using filesystem use the `./cuga_workspace` dir only\nwhen using crm make sure to go through all pages on queries that requires paginating all accounts etc\nwhen user asks questions about cuga then answer the question by first reading the filesystem information inside the file `./cuga_workspace/cuga_knowledge.md` then answer the question\nWhen user asks to use email templates assume it has <results> placehoder to replace with the results"
+            policies_content = """## Plan
+when using filesystem use the `./cuga_workspace` dir only
+when user asks questions about cuga then answer the question by first reading the filesystem information inside the file `./cuga_workspace/cuga_knowledge.md` then answer the question
+When user asks to use email templates assume it has <results> placehoder to replace with the results
+The email of my assistant is jane@example.com"""
             os.environ["CUGA_POLICIES_CONTENT"] = policies_content
             os.environ["CUGA_LOAD_POLICIES"] = "true"
             logger.info("📋 Policies configured for demo_crm")
@@ -738,7 +742,7 @@ def start(
             # So we only enable cache in CI environments (GitHub Actions, etc.) where
             # the environment is more controlled and packages are pre-installed
             # In local test runs, we use --no-cache to ensure reliable package installation
-            use_cache = os.environ.get("CI") is not None
+            use_cache = True
 
             if use_cache:
                 logger.debug("Using uvx cache for faster startup in CI environment")

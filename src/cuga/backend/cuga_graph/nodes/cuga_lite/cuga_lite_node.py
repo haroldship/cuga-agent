@@ -1,5 +1,5 @@
 """
-CugaLite Node - Fast execution node using CugaAgent
+CugaLite Node - Fast execution node using CugaLite subgraph
 """
 
 import json
@@ -8,26 +8,14 @@ from langgraph.types import Command
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from cuga.backend.cuga_graph.nodes.cuga_lite import CugaAgent
 from cuga.backend.cuga_graph.nodes.shared.base_node import BaseNode
 from cuga.backend.cuga_graph.state.agent_state import AgentState, SubTaskHistory
 from cuga.backend.activity_tracker.tracker import ActivityTracker
 from cuga.backend.cuga_graph.nodes.api.api_planner_agent.prompts.load_prompt import ActionName
 from cuga.backend.cuga_graph.state.api_planner_history import CoderAgentHistoricalOutput
-from cuga.config import settings
-from langchain_core.messages import AIMessage
+from langchain_core.messages import HumanMessage
 from cuga.backend.llm.utils.helpers import load_one_prompt
-
-try:
-    from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
-except ImportError:
-    try:
-        from langfuse.callback.langchain import LangchainCallbackHandler as LangfuseCallbackHandler
-    except ImportError:
-        LangfuseCallbackHandler = None
-
-
-from cuga.configurations.instructions_manager import get_all_instructions_formatted
+from cuga.config import settings
 
 
 tracker = ActivityTracker()
@@ -57,7 +45,7 @@ class CugaLiteOutput(BaseModel):
 
 
 class CugaLiteNode(BaseNode):
-    """Node wrapper for CugaAgent - fast execution mode."""
+    """Node wrapper for routing to CugaLite subgraph."""
 
     def __init__(self, langfuse_handler: Optional[Any] = None, prompt_template: Optional[str] = None):
         super().__init__()
@@ -101,38 +89,91 @@ class CugaLiteNode(BaseNode):
             logger.error(f"Exception reading file {file_path}: {e}")
             return None
 
-    async def create_agent(self, app_names=None, task_loaded_from_file=False, is_autonomous_subtask=False):
-        """Create and initialize a new CugaAgent with optional app filtering."""
-        logger.info("Initializing new CugaLite agent instance...")
+    @staticmethod
+    def _get_new_variable_names(state: AgentState, initial_var_names: List[str]) -> List[str]:
+        """Get names of variables created during execution in chronological order.
 
-        langfuse_handler = self.langfuse_handler
-        if langfuse_handler is None and settings.advanced_features.langfuse_tracing:
-            if LangfuseCallbackHandler is not None:
-                langfuse_handler = LangfuseCallbackHandler()
-                logger.info("Langfuse tracing enabled for CugaLite")
-            else:
-                logger.warning("Langfuse tracing enabled but langfuse package not available")
+        Args:
+            state: Current agent state
+            initial_var_names: Variable names before execution
 
-        agent = CugaAgent(
-            app_names=app_names,
-            langfuse_handler=langfuse_handler,
-            instructions=get_all_instructions_formatted(),
-            task_loaded_from_file=task_loaded_from_file,
-            is_autonomous_subtask=is_autonomous_subtask,
-            prompt_template=self.prompt_template,
+        Returns:
+            List of new variable names in chronological creation order
+        """
+        # Use creation_order to ensure chronological ordering
+        current_var_names = state.variable_creation_order
+        return [name for name in current_var_names if name not in initial_var_names]
+
+    @staticmethod
+    def _log_variable_changes(state: AgentState, initial_var_names: List[str]) -> None:
+        """Log variable changes after execution.
+
+        Args:
+            state: Current agent state
+            initial_var_names: Variable names before execution
+        """
+        current_var_names = state.variables_manager.get_variable_names()
+        new_var_names = CugaLiteNode._get_new_variable_names(state, initial_var_names)
+        logger.info(
+            f"Variables before: {len(initial_var_names)}, "
+            f"after: {len(current_var_names)}, "
+            f"new: {len(new_var_names)}"
         )
-        await agent.initialize()
-        logger.info(f"CugaLite agent initialized with {len(agent.tools)} tools")
-        return agent
 
-    async def node(self, state: AgentState) -> Command[Literal['FinalAnswerAgent']]:
-        """Execute the CugaAgent for fast task execution.
+    def _generate_fallback_answer(self, state: AgentState, new_var_names: List[str]) -> str:
+        """Generate fallback answer when execution result is empty.
+
+        Args:
+            state: Current agent state
+            new_var_names: List of newly created variable names
+
+        Returns:
+            Fallback answer string
+        """
+        if not new_var_names:
+            return "Task completed successfully."
+
+        last_var_name = new_var_names[-1]
+        last_var_value = state.variables_manager.get_variable(last_var_name)
+
+        if last_var_value is None:
+            return "Task completed successfully."
+
+        if isinstance(last_var_value, (list, dict)):
+            try:
+                answer = json.dumps(last_var_value, indent=2, default=str)
+            except Exception:
+                answer = str(last_var_value)
+        else:
+            answer = str(last_var_value)
+
+        logger.info(f"Using last variable '{last_var_name}' value as fallback answer")
+        return answer
+
+    @staticmethod
+    def _has_error(answer: str) -> bool:
+        """Check if answer contains error indicators.
+
+        Args:
+            answer: Answer string to check
+
+        Returns:
+            True if error indicators found, False otherwise
+        """
+        if not answer:
+            return False
+
+        error_indicators = ['Error during execution:', 'Error:', 'Exception:', 'Traceback', 'Failed to']
+        return any(indicator in answer for indicator in error_indicators)
+
+    async def node(self, state: AgentState) -> Command[Literal['FinalAnswerAgent', 'PlanControllerAgent']]:
+        """Execute CugaLite graph wrapper and process results.
 
         Args:
             state: Current agent state
 
         Returns:
-            Command to proceed to FinalAnswerAgent with the result
+            Command to route to FinalAnswerAgent or PlanControllerAgent
         """
         logger.info(f"CugaLite executing - state.input: {state.input}")
         logger.info(f"CugaLite executing - state.sub_task: {state.sub_task}")
@@ -149,9 +190,6 @@ class CugaLiteNode(BaseNode):
         #     )
         # )
 
-        # Extract app names if available
-        app_names = None
-
         # Use sub_task as the input if available (preferred over state.input)
         task_input = state.sub_task if state.sub_task else state.input
         is_autonomous_subtask = bool(state.sub_task)
@@ -159,7 +197,6 @@ class CugaLiteNode(BaseNode):
         logger.info(f"is_autonomous_subtask: {is_autonomous_subtask}")
 
         # Check if task_input is just a markdown file path and replace with file content
-        task_loaded_from_file = False
         task_input_stripped = task_input.strip()
         if (
             task_input_stripped.endswith('.md')
@@ -172,7 +209,6 @@ class CugaLiteNode(BaseNode):
                 if file_content:
                     task_input = file_content
                     task_input += "\n\nDo not use cuga_kowledge.md for the above task."
-                    task_loaded_from_file = True
                     logger.info(f"Replaced task input with file content from {task_input_stripped}")
                 else:
                     logger.warning(f"Failed to read file {task_input_stripped}, using original task input")
@@ -182,6 +218,7 @@ class CugaLiteNode(BaseNode):
                 )
 
         # Determine app configuration
+        app_names = None
         if state.sub_task_app:
             app_names = [state.sub_task_app]
             logger.info(f"Using app from state.sub_task_app: {app_names}")
@@ -189,210 +226,162 @@ class CugaLiteNode(BaseNode):
             app_names = [app.name for app in state.api_intent_relevant_apps if app.type == 'api']
             logger.info(f"Using apps from state.api_intent_relevant_apps: {app_names}")
 
-        # Create a local agent instance for this execution
-        agent = await self.create_agent(
-            app_names=app_names,
-            task_loaded_from_file=task_loaded_from_file,
+        # Store initial state in metadata for callback tracking
+        initial_var_names = state.variables_manager.get_variable_names()
+        logger.info(f"Storing {len(initial_var_names)} initial variable names for tracking")
+
+        # Add the user's input to chat_messages (shared key)
+        # Preserve existing chat history for multi-turn conversations
+        updated_chat_messages = list(state.chat_messages) if state.chat_messages else []
+        logger.info(f"Existing chat_messages count: {len(updated_chat_messages)}")
+        if updated_chat_messages:
+            logger.debug(f"Previous messages: {[type(msg).__name__ for msg in updated_chat_messages]}")
+
+        updated_chat_messages.append(HumanMessage(content=task_input))
+        logger.info(f"Added user input to chat_messages: {task_input[:100]}...")
+        logger.info(f"Total chat_messages count after append: {len(updated_chat_messages)}")
+
+        # Route to CugaLite subgraph with updated state
+        logger.info("Routing to CugaLiteSubgraph")
+        return Command(
+            goto="CugaLiteSubgraph",
+            update={
+                "chat_messages": updated_chat_messages,
+                "variables_storage": state.variables_storage,
+                "variable_counter_state": state.variable_counter_state,
+                "variable_creation_order": state.variable_creation_order,
+                "sub_task": state.sub_task,
+                "sub_task_app": state.sub_task_app,
+                "api_intent_relevant_apps": state.api_intent_relevant_apps,
+                "cuga_lite_metadata": {
+                    "initial_var_names": initial_var_names,
+                    "is_autonomous_subtask": is_autonomous_subtask,
+                },
+            },
+        )
+
+    async def callback_node(
+        self, state: AgentState
+    ) -> Command[Literal['FinalAnswerAgent', 'PlanControllerAgent']]:
+        """Process results after CugaLite subgraph execution."""
+        logger.info("CugaLite callback node - processing subgraph results")
+
+        # Get metadata from state
+        metadata = state.cuga_lite_metadata or {}
+        initial_var_names = metadata.get("initial_var_names", [])
+        is_autonomous_subtask = metadata.get("is_autonomous_subtask", False)
+
+        answer = state.final_answer or "No answer found"
+        logger.info(f"Extracted answer: {answer[:200]}...")
+
+        # Log variable changes
+        self._log_variable_changes(state, initial_var_names)
+
+        # Process the results using the existing logic
+        return await self._process_results(
+            state=state,
+            answer=answer,
+            initial_var_names=initial_var_names,
             is_autonomous_subtask=is_autonomous_subtask,
         )
 
-        # Add execution start message
-        state.messages.append(
-            AIMessage(
-                content=json.dumps(
-                    {
-                        "status": "executing",
-                        "message": f"Executing task with {len(agent.tools)} available tools",
-                        "tools_count": len(agent.tools),
-                    }
-                )
-            )
-        )
+    async def _process_results(
+        self,
+        state: AgentState,
+        answer: str,
+        initial_var_names: List[str],
+        is_autonomous_subtask: bool,
+    ) -> Command[Literal['FinalAnswerAgent', 'PlanControllerAgent']]:
+        """Process results from CugaLite graph execution and route to appropriate next node.
 
-        # Get current variables from state to pass as initial context
-        initial_var_names = state.variables_manager.get_variable_names()
-        initial_context = {}
-        for name in initial_var_names:
-            value = state.variables_manager.get_variable(name)
-            # Convert sets to lists for JSON serialization (recursively)
-            converted_value = _convert_sets_to_lists(value)
-            if value is not converted_value and isinstance(value, set):
-                logger.debug(f"Converted set variable '{name}' to list for serialization")
-            initial_context[name] = converted_value
+        Args:
+            state: Agent state
+            answer: Final answer from graph execution
+            initial_var_names: Variable names before execution
+            is_autonomous_subtask: Whether this is a subtask
 
-        logger.info(f"Passing {len(initial_context)} variables to CugaAgent as initial context")
-        logger.info(f"Variable names: {initial_var_names}")
-        for var_name in initial_var_names:
-            logger.info(
-                f"  - {var_name}: {type(initial_context[var_name]).__name__} = {str(initial_context[var_name])[:100]}"
-            )
-        logger.info(f"Variables summary: {state.variables_manager.get_variables_summary()}")
+        Returns:
+            Command to route to FinalAnswerAgent or PlanControllerAgent
+        """
+        logger.info("Processing CugaLite execution results")
+        logger.info(f"Answer: {answer[:200] if answer else 'None'}...")
 
-        # Execute the task - messages will be added automatically by CugaAgent
-        # Always pass chat_messages (even if empty list) to enable conversation tracking
-        # Only pass None if explicitly not set
-        chat_messages_to_pass = state.chat_messages
-        logger.info(
-            f"Before execute: state.chat_messages has {len(chat_messages_to_pass) if chat_messages_to_pass is not None else 'None'} messages"
-        )
-        logger.debug(f"chat_messages content: {chat_messages_to_pass}")
-        answer, metrics, updated_state_messages, updated_chat_messages = await agent.execute(
-            task_input,
-            recursion_limit=15,
-            show_progress=False,
-            state_messages=state.messages,
-            chat_messages=chat_messages_to_pass,
-            initial_context=initial_context,
-            thread_id=state.thread_id,  # Pass thread_id for E2B sandbox caching
-            state=state,
-        )
-        logger.info(
-            f"After execute: updated_chat_messages has {len(updated_chat_messages) if updated_chat_messages is not None else 'None'} messages"
-        )
-
-        # Check if execution failed (graph-level errors or code execution errors)
-        has_error = metrics is not None and metrics.get('error') is not None
-
-        # Also check if the answer itself indicates an error
-        if not has_error and answer:
-            error_indicators = ['Error during execution:', 'Error:', 'Exception:', 'Traceback', 'Failed to']
-            has_error = any(indicator in answer for indicator in error_indicators)
-            if has_error:
-                logger.warning(f"Detected error in answer content: {answer[:200]}...")
+        # Check for errors
+        has_error = self._has_error(answer)
+        if has_error:
+            logger.warning(f"Detected error in answer content: {answer[:200]}...")
 
         if has_error:
-            error_msg = (
-                metrics.get('error', 'Code execution error detected in output')
-                if metrics
-                else 'Code execution error detected in output'
-            )
-            logger.error(f"CugaLite execution failed with error: {error_msg}")
+            logger.error("CugaLite execution failed with error")
             logger.error(f"Full answer: {answer}")
 
             # Update state with error information
-            if state.sub_task:
+            if is_autonomous_subtask:
                 # For sub-tasks, add error to history and return to plan controller
+
                 if state.api_planner_history:
                     state.api_planner_history[-1].agent_output = CoderAgentHistoricalOutput(
                         variables_summary="Execution failed",
-                        final_output=answer,  # This already contains the error message
+                        final_output=answer,
                     )
 
                 state.stm_all_history.append(
                     SubTaskHistory(
                         sub_task=state.format_subtask(),
                         steps=[],
-                        final_answer=answer,  # Contains error message
+                        final_answer=answer,
                     )
                 )
                 state.last_planner_answer = answer
-                state.sender = "CugaLiteNode"
+                state.sender = self.name
                 logger.info("CugaLite sub-task execution failed, returning error to PlanControllerAgent")
                 return Command(update=state.model_dump(), goto="PlanControllerAgent")
             else:
                 # For regular execution, set final answer with error
-                state.final_answer = answer  # Contains error message
+                state.final_answer = answer
                 state.sender = self.name
                 logger.info("CugaLite execution failed, proceeding to FinalAnswerAgent with error")
                 return Command(update=state.model_dump(), goto="FinalAnswerAgent")
 
-        # Update chat_messages with the updated chat conversation messages from execution
-        if updated_chat_messages is not None:
-            state.chat_messages = updated_chat_messages
-            logger.info(
-                f"Updated chat_messages with {len(updated_chat_messages)} messages for conversation history"
-            )
+        # chat_messages should already be synced since it's a shared key
+        # But ensure they're properly formatted as BaseMessage objects
+        if state.chat_messages:
+            logger.info(f"Chat messages synced from subgraph: {len(state.chat_messages)} messages")
 
-        # Extract updated context from state messages (not chat messages) and sync to var_manager
-        updated_variables = {}
-        if updated_state_messages:
-            for msg in reversed(updated_state_messages):
-                if (
-                    isinstance(msg, AIMessage)
-                    and hasattr(msg, 'additional_kwargs')
-                    and 'context' in msg.additional_kwargs
-                ):
-                    updated_variables = msg.additional_kwargs['context']
-                    logger.debug(
-                        f"Extracted {len(updated_variables)} updated variables from CodeAct execution"
-                    )
-                    break
-
-        # Sync new variables from CodeAct execution to var_manager
-        initial_var_set = set(initial_var_names)
-        new_var_names = []
-
-        if updated_variables:
-            # Identify newly created variables
-            for var_name, var_value in updated_variables.items():
-                if not var_name.startswith('_') and var_name not in initial_var_set:
-                    new_var_names.append(var_name)
-
-            # Add all variables to state (changed from keeping only last variable for subtasks)
-            vars_to_add = new_var_names
-            logger.info(f"Adding {len(vars_to_add)} new variables to variables_manager")
-
-            # Add the variables to state
-            for var_name in vars_to_add:
-                var_value = updated_variables[var_name]
-                state.variables_manager.add_variable(
-                    var_value, name=var_name, description="Generated by CugaLite"
-                )
-                logger.info(f"Added new variable '{var_name}' to variables_manager")
-
+        # Variables are already synced via variables_storage (shared key)
+        new_var_names = self._get_new_variable_names(state, initial_var_names)
         logger.info(
-            f"After execution, variables_manager now has {state.variables_manager.get_variable_count()} variables"
-        )
-        logger.info(f"Variable names after execution: {state.variables_manager.get_variable_names()}")
-
-        logger.info(f"CugaLite completed in {metrics.get('duration_seconds', 0) if metrics else 0}s")
-        logger.info(f"Used {metrics.get('total_tokens', 0) if metrics else 0} tokens")
-        logger.info(
-            f"Steps: {metrics.get('step_count', 0) if metrics else 0}, Tokens: {metrics.get('total_tokens', 0) if metrics else 0}"
+            f"After execution, variables_manager has {state.variables_manager.get_variable_count()} variables ({len(new_var_names)} new)"
         )
 
         # Check if answer is empty and provide a fallback
         if not answer or not answer.strip():
-            logger.warning("Empty final answer detected from CugaAgent, using fallback")
-            # Use the last variable's value as fallback answer
-            if new_var_names and updated_variables:
-                last_var_name = new_var_names[-1]
-                last_var_value = updated_variables.get(last_var_name)
-                if last_var_value is not None:
-                    # Format the value nicely
-                    if isinstance(last_var_value, (list, dict)):
-                        try:
-                            answer = json.dumps(last_var_value, indent=2, default=str)
-                        except Exception:
-                            answer = str(last_var_value)
-                    else:
-                        answer = str(last_var_value)
-                    logger.info(f"Using last variable '{last_var_name}' value as fallback answer")
-                else:
-                    answer = "Task completed successfully."
-                    logger.info("Using generic fallback answer (variable value is None)")
-            else:
-                answer = "Task completed successfully."
-                logger.info("Using generic fallback answer (no variables)")
-
-        # Log Langfuse trace ID if available
-        if agent and self.langfuse_handler:
-            trace_id = agent.get_langfuse_trace_id()
-            if trace_id:
-                logger.info(f"Langfuse Trace ID: {trace_id}")
-                print(f"🔍 Langfuse Trace ID: {trace_id}")
+            logger.warning("Empty final answer detected, using fallback")
+            answer = self._generate_fallback_answer(state, new_var_names)
 
         # Check if we're executing a sub-task
-        if state.sub_task:
+        if is_autonomous_subtask:
             # Sub-task execution - return to PlanControllerAgent
+
+            # Keep only last N generated variables
+            keep_last_n = settings.advanced_features.sub_task_keep_last_n
+            if len(new_var_names) > keep_last_n:
+                original_count = len(new_var_names)
+                vars_to_keep = new_var_names[-keep_last_n:]
+                vars_to_remove = new_var_names[:-keep_last_n]
+                for var_name in vars_to_remove:
+                    if state.variables_manager.remove_variable(var_name):
+                        logger.debug(
+                            f"Removed variable '{var_name}' to keep only last {keep_last_n} generated variables"
+                        )
+                new_var_names = vars_to_keep
+                logger.info(f"Kept only last {keep_last_n} of {original_count} generated variables")
+
             state.api_last_step = ActionName.CONCLUDE_TASK
             state.guidance = None
 
-            # Add to previous steps
-
             # Update api_planner_history with CoderAgentHistoricalOutput
             if state.api_planner_history:
-                # Use the new variable names that were actually added to variables_manager
                 state.api_planner_history[-1].agent_output = CoderAgentHistoricalOutput(
                     variables_summary=state.variables_manager.get_variables_summary(
                         new_var_names, max_length=5000
@@ -409,21 +398,10 @@ class CugaLiteNode(BaseNode):
                     final_answer=answer,
                 )
             )
-            logger.debug(
-                "finished task stm_all_history last object: {}".format(
-                    state.stm_all_history[-1].model_dump_json()
-                )
-            )
             state.last_planner_answer = answer
-            state.sender = "CugaLiteNode"
+            state.sender = self.name
 
             logger.info("CugaLite sub-task execution successful, proceeding to PlanControllerAgent")
-            logger.info(f"Variables before return - Count: {state.variables_manager.get_variable_count()}")
-            logger.info(f"Variables before return - Names: {state.variables_manager.get_variable_names()}")
-            logger.info(f"Variables before return - Storage keys: {list(state.variables_storage.keys())}")
-            logger.info(f"Variables before return - Counter: {state.variable_counter_state}")
-            logger.info(f"Variables before return - Creation order: {state.variable_creation_order}")
-
             return Command(update=state.model_dump(), goto="PlanControllerAgent")
         else:
             # Regular execution - proceed to FinalAnswerAgent

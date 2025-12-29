@@ -52,88 +52,89 @@ mcpServers:
 """
 
 
+@pytest_asyncio.fixture(scope="module")
+async def registry_server():
+    """Start API Registry server for testing"""
+    server_port = 8001
+    server_process = None
+    config_path = None
+
+    try:
+        # Kill any existing process on the port
+        kill_process_on_port(server_port)
+        await asyncio.sleep(1)
+
+        # Create temporary config file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(LEGACY_CONFIG)
+            config_path = f.name
+
+        # Set environment variable
+        os.environ["MCP_SERVERS_FILE"] = config_path
+
+        # Start server in background
+        server_process = subprocess.Popen(
+            [
+                'uv',
+                'run',
+                'python',
+                os.path.join(
+                    PACKAGE_ROOT, 'backend', 'tools_env', 'registry', 'registry', 'api_registry_server.py'
+                ),
+            ],
+            cwd=None,
+        )
+
+        # Wait for server to start
+        await asyncio.sleep(3)
+
+        # Check if server is running
+        async with httpx.AsyncClient() as client:
+            for i in range(10):  # Try for 10 seconds
+                try:
+                    response = await client.get(f"http://127.0.0.1:{server_port}/")
+                    if response.status_code == 200:
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+            else:
+                raise Exception("Server failed to start")
+
+        yield f"http://127.0.0.1:{server_port}"
+
+    finally:
+        # Cleanup - try multiple methods to ensure server is stopped
+        print("Cleaning up registry server...")
+
+        # Method 1: Terminate the subprocess if it exists
+        if server_process:
+            try:
+                server_process.terminate()
+                server_process.wait(timeout=5)
+            except (subprocess.TimeoutExpired, ProcessLookupError):
+                if server_process.poll() is None:  # Process still running
+                    server_process.kill()
+                    server_process.wait()
+            except Exception as e:
+                print(f"Error terminating server process: {e}")
+
+        # Method 2: Kill any remaining process on the port
+        kill_process_on_port(server_port)
+
+        # Method 3: Wait a moment to ensure cleanup
+        await asyncio.sleep(1)
+
+        # Remove config file
+        if config_path and os.path.exists(config_path):
+            try:
+                os.remove(config_path)
+            except Exception as e:
+                print(f"Error removing config file: {e}")
+
+
 class TestAPIRegistryE2E:
     """End-to-End tests for API Registry Server"""
-
-    @pytest_asyncio.fixture(scope="class")
-    async def registry_server(self):
-        """Start API Registry server for testing"""
-        server_port = 8001
-        server_process = None
-        config_path = None
-
-        try:
-            # Kill any existing process on the port
-            kill_process_on_port(server_port)
-            await asyncio.sleep(1)
-
-            # Create temporary config file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                f.write(LEGACY_CONFIG)
-                config_path = f.name
-
-            # Set environment variable
-            os.environ["MCP_SERVERS_FILE"] = config_path
-
-            # Start server in background
-            server_process = subprocess.Popen(
-                [
-                    'uv',
-                    'run',
-                    'python',
-                    os.path.join(
-                        PACKAGE_ROOT, 'backend', 'tools_env', 'registry', 'registry', 'api_registry_server.py'
-                    ),
-                ],
-                cwd=None,
-            )
-
-            # Wait for server to start
-            await asyncio.sleep(3)
-
-            # Check if server is running
-            async with httpx.AsyncClient() as client:
-                for i in range(10):  # Try for 10 seconds
-                    try:
-                        response = await client.get(f"http://127.0.0.1:{server_port}/")
-                        if response.status_code == 200:
-                            break
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1)
-                else:
-                    raise Exception("Server failed to start")
-
-            yield f"http://127.0.0.1:{server_port}"
-
-        finally:
-            # Cleanup - try multiple methods to ensure server is stopped
-            print("Cleaning up registry server...")
-
-            # Method 1: Terminate the subprocess if it exists
-            if server_process:
-                try:
-                    server_process.terminate()
-                    server_process.wait(timeout=5)
-                except (subprocess.TimeoutExpired, ProcessLookupError):
-                    if server_process.poll() is None:  # Process still running
-                        server_process.kill()
-                        server_process.wait()
-                except Exception as e:
-                    print(f"Error terminating server process: {e}")
-
-            # Method 2: Kill any remaining process on the port
-            kill_process_on_port(server_port)
-
-            # Method 3: Wait a moment to ensure cleanup
-            await asyncio.sleep(1)
-
-            # Remove config file
-            if config_path and os.path.exists(config_path):
-                try:
-                    os.remove(config_path)
-                except Exception as e:
-                    print(f"Error removing config file: {e}")
 
     @pytest.mark.asyncio
     async def test_root_endpoint(self, registry_server):

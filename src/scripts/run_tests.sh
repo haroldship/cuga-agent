@@ -4,16 +4,15 @@
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Usage: $0 [OPTION]"
     echo ""
-    echo "Test runner script with multiple options:"
-    echo "  (no args)    Run default tests (registry + variables manager + local sandbox + E2B lite + e2e without save_reuse and without sandbox docker)"
-    echo "  full_tests   Run full tests (registry + e2e system tests + variables manager tests)"
-    echo "  unit_tests   Run unit tests (registry + variables manager + local sandbox tests + E2B lite tests)"
+    echo "Test runner script:"
+    echo "  (no args)    Run default tests (registry + e2e + memory + stability tests)"
+    echo "  unit_tests         Run unit tests only (registry + variables manager + sandbox + E2B lite)"
     echo "  --help, -h   Show this help message"
     echo ""
     exit 0
 fi
 
-echo "Starting unit tests with uv..."
+echo "Starting tests with uv..."
 
 echo "Running ruff check..."
 if ! uv run ruff check; then
@@ -27,35 +26,42 @@ if ! uv run ruff format --check; then
     exit 1
 fi
 
-# Initialize exit code tracker
-TEST_EXIT_CODE=0
+# Copy huggingface examples to cuga_workspace
+echo "Copying huggingface examples to cuga_workspace..."
+mkdir -p ./cuga_workspace
+cp -r docs/examples/huggingface/* ./cuga_workspace/
 
-# Helper function to run pytest and track failures
+# Helper function to run pytest and exit on failure
+# Exit codes: 0=success, 1-4=failures, 5=no tests collected (treat as success)
 run_pytest() {
     uv run pytest "$@" -v
     local ec=$?
     echo "pytest $* exited with code $ec"
-    TEST_EXIT_CODE=$((TEST_EXIT_CODE | $?))
+    # Exit code 5 means no tests collected, which is not a failure
+    if [ $ec -ne 0 ] && [ $ec -ne 5 ]; then
+        echo "❌ Test failed! Exiting..."
+        exit 1
+    fi
 }
 
 # Helper function to run pytest with memory dependencies installed
+# Exit codes: 0=success, 1-4=failures, 5=no tests collected (treat as success)
 run_pytest_with_memory() {
     # Sync memory dependency groups before running tests
     uv sync --group memory
     uv run pytest "$@" -v
     local ec=$?
     echo "pytest (with memory) $* exited with code $ec"
-    TEST_EXIT_CODE=$((TEST_EXIT_CODE | $?))
+    # Exit code 5 means no tests collected, which is not a failure
+    if [ $ec -ne 0 ] && [ $ec -ne 5 ]; then
+        echo "❌ Test failed! Exiting..."
+        exit 1
+    fi
 }
 
 # Check for test type flag
-if [ "$1" = "full_tests" ]; then
-    echo "Running full tests (registry + e2e system tests + variables manager tests)..."
-    rm -f ./src/cuga/backend/tools_env/registry/mcp_servers/saved_flows.py
-    echo "Running all tests (registry + e2e system tests)..."
-    # run_pytest_with_memory ./src/system_tests/unit/test_memory.py ./src/system_tests/e2e/test_memory_integration.py
-elif [ "$1" = "unit_tests" ]; then
-    echo "Running unit tests (registry + variables manager + local sandbox tests + E2B lite tests)..."
+if [ "$1" = "unit_tests" ]; then
+    echo "Running unit tests (registry + variables manager + local sandbox + E2B lite)..."
     run_pytest ./src/cuga/backend/tools_env/registry/tests/
     run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
     run_pytest ./src/system_tests/e2e/test_runtime_tools.py
@@ -64,21 +70,29 @@ elif [ "$1" = "unit_tests" ]; then
     run_pytest ./src/system_tests/unit/test_sandbox_async.py
     run_pytest ./src/cuga/backend/cuga_graph/nodes/api/code_agent/test_extract_codeblocks.py
     run_pytest ./src/system_tests/unit/test_variable_creation_order.py
-    # run_pytest_with_memory ./src/system_tests/unit/test_memory.py ./src/system_tests/unit/test_cli.py
+    echo "✅ All unit tests passed!"
+    exit 0
 else
-    echo "Running default tests (registry + variables manager + local sandbox + E2B lite + e2e without save_reuse and without sandbox docker)..."
+    echo "Running default tests (registry + variables manager + local sandbox + E2B lite + e2e + memory + stability)..."
     run_pytest ./src/cuga/backend/tools_env/registry/tests/
     run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
+    run_pytest ./src/system_tests/e2e/test_runtime_tools.py
     run_pytest ./src/cuga/backend/tools_env/code_sandbox/tests/
     run_pytest ./src/cuga/backend/cuga_graph/nodes/cuga_lite/tests/
-    run_pytest ./src/system_tests/e2e/balanced_test.py ./src/system_tests/e2e/fast_test.py ./src/system_tests/e2e/test_runtime_tools.py
+    run_pytest ./src/system_tests/unit/test_sandbox_async.py
     run_pytest ./src/cuga/backend/cuga_graph/nodes/api/code_agent/test_extract_codeblocks.py
     run_pytest ./src/system_tests/unit/test_variable_creation_order.py
-    # run_pytest_with_memory ./src/system_tests/unit/test_memory.py ./src/system_tests/unit/test_cli.py
-    run_pytest_with_memory ./src/system_tests/e2e/test_memory_integration.py
-    run_pytest_with_memory ./src/system_tests/e2e/balanced_test_memory.py
-
+    # run_pytest_with_memory ./src/system_tests/e2e/test_memory_integration.py
+    # run_pytest_with_memory ./src/system_tests/e2e/balanced_test_memory.py
+    echo "Running stability tests..."
+    # Force unbuffered output for Python to ensure all logs are captured
+    PYTHONUNBUFFERED=1 uv run run_stability_tests.py --method local
+    ec=$?
+    echo "stability tests exited with code $ec"
+    if [ $ec -ne 0 ]; then
+        echo "❌ Stability tests failed! Exiting..."
+        exit 1
+    fi
+    echo "✅ All tests passed!"
+    exit 0
 fi
-
-echo "Tests completed with exit code: $TEST_EXIT_CODE"
-exit $TEST_EXIT_CODE

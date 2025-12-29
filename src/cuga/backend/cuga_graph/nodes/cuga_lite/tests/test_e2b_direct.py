@@ -1,5 +1,6 @@
 """Direct E2B integration test - exploring how to inject variables and tools."""
 
+import os
 import pytest
 
 
@@ -7,6 +8,10 @@ import pytest
 @pytest.mark.skipif(
     not pytest.importorskip("e2b_code_interpreter", reason="e2b-code-interpreter not installed"),
     reason="E2B not available",
+)
+@pytest.mark.skipif(
+    not os.environ.get("E2B_API_KEY"),
+    reason="E2B_API_KEY environment variable not set",
 )
 async def test_e2b_direct_with_variables_and_tools():
     """
@@ -79,13 +84,13 @@ import asyncio
 
 {variables_code}
 
-async def __async_main():
+async def _async_main():
 {_indent_code(user_code, 1)}
     return locals()
 
 # Execute
-__result_locals = await asyncio.wait_for(__async_main(), timeout=30)
-print(__result_locals)
+_result_locals = await asyncio.wait_for(_async_main(), timeout=30)
+print(_result_locals)
 """
 
     print("=" * 60)

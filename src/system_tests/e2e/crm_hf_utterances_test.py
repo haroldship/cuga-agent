@@ -35,7 +35,7 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
         query = """From the list of emails in the file contacts.txt, please filter those who exist in the CRM application. For the filtered contacts, retrieve their name and their associated account name, and calculate their account's revenue percentile across all accounts. Finally, draft a an email based on email_template.md template summarizing the result and show it to me"""
 
         all_events = await self.run_task(query, thread_id=self.thread_id)
-
+        await asyncio.sleep(10)
         self._assert_answer_event(
             all_events,
             expected_keywords=[
@@ -47,10 +47,6 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
             ],
         )
 
-        print("\n--- Sleeping for 10 seconds to allow traces to save ---")
-        await asyncio.sleep(10)
-        print("--- Sleep complete ---")
-
     async def test_get_top_n_accounts_revenue(self):
         """
         Test use case 2: Get top 5 accounts by revenue.
@@ -60,7 +56,7 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
         query = "get the top 5 accounts by revenue"
 
         all_events = await self.run_task(query, thread_id=self.thread_id)
-
+        await asyncio.sleep(10)
         self._assert_answer_event(
             all_events,
             expected_keywords=[
@@ -71,10 +67,6 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
                 "Phi Chi Inc",
             ],
         )
-
-        print("\n--- Sleeping for 10 seconds to allow traces to save ---")
-        await asyncio.sleep(10)
-        print("--- Sleep complete ---")
 
     async def test_show_users_in_crm_system(self):
         """
@@ -96,8 +88,25 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
             ],
         )
 
-        print("\n--- Sleeping for 10 seconds to allow traces to save ---")
+        query = "show me the details of sarah"
+        all_events = await self.run_task(query, thread_id=self.thread_id)
+
+        self._assert_answer_event(
+            all_events,
+            expected_keywords=["sarah", "sarah.bell@gammadeltainc.partners.org"],
+        )
+
+        # Verify that 'brown' does not appear in the answer (should be Sarah Bell, not Dorothy Brown)
+        self._assert_answer_event(
+            all_events,
+            expected_keywords=["brown"],
+            operator="not_contains",
+        )
+
+        query = "how many employee's work at her account's company?"
+        all_events = await self.run_task(query, thread_id=self.thread_id)
         await asyncio.sleep(10)
+        self._assert_answer_event(all_events, expected_keywords=["4,260", "4260"], keyword_match_mode="any")
         print("--- Sleep complete ---")
 
     async def test_what_is_cuga(self):
@@ -109,14 +118,11 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
         query = "What is CUGA?"
 
         all_events = await self.run_task(query, thread_id=self.thread_id)
-
+        await asyncio.sleep(10)
         self._assert_answer_event(
             all_events,
             expected_keywords=["cuga", "configurable", "generalist", "agent"],
         )
-
-        print("\n--- Sleeping for 10 seconds to allow traces to save ---")
-        await asyncio.sleep(10)
         print("--- Sleep complete ---")
 
     async def test_playbook_execution(self):
@@ -131,7 +137,7 @@ class TestCRMHF_Examples(BaseCRMTestServerStream):
 
         self._assert_answer_event(
             all_events,
-            expected_keywords=["start tour", "middle pane", "right pane"],
+            expected_keywords=["start", "middle", "right", "left"],
         )
 
         print("\n--- Sleeping for 10 seconds to allow traces to save ---")

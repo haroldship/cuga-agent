@@ -1,8 +1,9 @@
 import asyncio
 import uuid
 import time
+import os
 import httpx
-from system_tests.e2e.base_test import BaseTestServerStream, STREAM_ENDPOINT, SERVER_URL
+from system_tests.e2e.base_test import BaseTestServerStream, SERVER_URL
 
 STATE_ENDPOINT = f"{SERVER_URL}/api/agent/state"
 
@@ -16,6 +17,9 @@ class LoadTest(BaseTestServerStream):
     test_env_vars = {
         "CUGA_MODE": "api",
         "CUGA_TEST_ENV": "true",
+        "DYNACONF_SERVER_PORTS__DIGITAL_SALES_API": "8000",
+        "DYNACONF_SERVER_PORTS__REGISTRY": "8001",
+        "DYNACONF_SERVER_PORTS__DEMO": "7860",
         "DYNACONF_ADVANCED_FEATURES__TRACKER_ENABLED": "false",
     }
 
@@ -24,6 +28,22 @@ class LoadTest(BaseTestServerStream):
 
     # Flag to enable/disable chat_messages isolation checks
     check_chat_messages_isolation = False
+
+    # E2B mode flag - set via environment variable CUGA_E2B_MODE=true
+    test_e2b_mode = os.getenv("CUGA_E2B_MODE", "false").lower() == "true"
+
+    def setUp(self):
+        super().setUp()
+        if self.test_e2b_mode:
+            from cuga.config import settings as cuga_settings
+
+            if not os.getenv("E2B_API_KEY"):
+                raise Exception("E2B_API_KEY not found in environment")
+            if not cuga_settings.server_ports.function_call_host:
+                raise Exception("settings.server_ports.function_call_host not found in settings.toml")
+
+            self.test_env_vars["DYNACONF_ADVANCED_FEATURES__E2B_SANDBOX"] = "true"
+            print("E2B mode enabled")
 
     async def get_agent_state(self, thread_id: str) -> dict:
         """Get agent state for a specific thread_id."""
@@ -114,58 +134,14 @@ class LoadTest(BaseTestServerStream):
                         f"User {user_id}: chat_messages should be empty at start, but found {initial_chat_messages_count}",
                     )
 
-            # We need to manually implement run_task here to pass headers
-            # BaseTestServerStream.run_task doesn't support custom headers easily without modification
-            # So I'll replicate the logic here with the header
+            # Run task using base class method with thread_id
+            all_events = await self.run_task(query=query, thread_id=thread_id, verbose=False, timeout=60.0)
 
-            all_events = []
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream(
-                    "POST",
-                    STREAM_ENDPOINT,
-                    json={"query": query},
-                    headers={"Accept": "text/event-stream", "X-Thread-ID": thread_id},
-                ) as response:
-                    if response.status_code != 200:
-                        return False, f"User {user_id}: Failed with status {response.status_code}"
-
-                    buffer = b""
-                    async for chunk in response.aiter_bytes():
-                        buffer += chunk
-                        while b"\n\n" in buffer:
-                            event_block, buffer = buffer.split(b"\n\n", 1)
-                            event_lines = event_block.split(b"\n")
-                            event_data = {}
-                            for line in event_lines:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                if line.startswith(b"event: "):
-                                    event_data["event"] = line[len(b"event: ") :].decode("utf-8").strip()
-                                elif line.startswith(b"data: "):
-                                    try:
-                                        data_str = line[len(b"data: ") :].decode("utf-8").strip()
-                                        event_data["data"] = self._parse_event_data(data_str)
-                                    except Exception:
-                                        event_data["data"] = line[len(b"data: ") :].strip()
-
-                            if event_data:
-                                all_events.append(event_data)
-                                if event_data.get("event") == "Answer":
-                                    break
-
-            # Verify result
-            answer_event = next((e for e in all_events if e.get("event") == "Answer"), None)
-            if not answer_event:
-                return False, f"User {user_id}: No Answer event found"
-
-            answer_data = str(answer_event.get("data", "")).lower()
-            for keyword in expected_keywords:
-                if keyword.lower() not in answer_data:
-                    return (
-                        False,
-                        f"User {user_id}: Answer missing keyword '{keyword}'. Got: {answer_data}",
-                    )
+            # Verify result using base class assertion
+            try:
+                self._assert_answer_event(all_events, expected_keywords=expected_keywords)
+            except AssertionError as e:
+                return False, f"User {user_id}: {str(e)}"
 
             # Validate state isolation (only if testing is enabled)
             if self.test_state_isolation:
@@ -204,54 +180,16 @@ class LoadTest(BaseTestServerStream):
             followup_query = "how many accounts did we retrieve?"
             followup_expected_keywords = ["50"]
 
-            all_followup_events = []
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                async with client.stream(
-                    "POST",
-                    STREAM_ENDPOINT,
-                    json={"query": followup_query},
-                    headers={"Accept": "text/event-stream", "X-Thread-ID": thread_id},
-                ) as response:
-                    if response.status_code != 200:
-                        return False, f"User {user_id}: Followup failed with status {response.status_code}"
+            # Run followup task using base class method
+            all_followup_events = await self.run_task(
+                query=followup_query, thread_id=thread_id, verbose=False, timeout=60.0
+            )
 
-                    buffer = b""
-                    async for chunk in response.aiter_bytes():
-                        buffer += chunk
-                        while b"\n\n" in buffer:
-                            event_block, buffer = buffer.split(b"\n\n", 1)
-                            event_lines = event_block.split(b"\n")
-                            event_data = {}
-                            for line in event_lines:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                if line.startswith(b"event: "):
-                                    event_data["event"] = line[len(b"event: ") :].decode("utf-8").strip()
-                                elif line.startswith(b"data: "):
-                                    try:
-                                        data_str = line[len(b"data: ") :].decode("utf-8").strip()
-                                        event_data["data"] = self._parse_event_data(data_str)
-                                    except Exception:
-                                        event_data["data"] = line[len(b"data: ") :].strip()
-
-                            if event_data:
-                                all_followup_events.append(event_data)
-                                if event_data.get("event") == "Answer":
-                                    break
-
-            # Verify followup result
-            followup_answer_event = next((e for e in all_followup_events if e.get("event") == "Answer"), None)
-            if not followup_answer_event:
-                return False, f"User {user_id}: No Answer event found in followup"
-
-            followup_answer_data = str(followup_answer_event.get("data", "")).lower()
-            for keyword in followup_expected_keywords:
-                if keyword.lower() not in followup_answer_data:
-                    return (
-                        False,
-                        f"User {user_id}: Followup answer missing keyword '{keyword}'. Got: {followup_answer_data}",
-                    )
+            # Verify followup result using base class assertion
+            try:
+                self._assert_answer_event(all_followup_events, expected_keywords=followup_expected_keywords)
+            except AssertionError as e:
+                return False, f"User {user_id}: Followup - {str(e)}"
 
             print(f"User {user_id}: ✓ Followup question answered correctly")
             print(f"User {user_id}: Success!")

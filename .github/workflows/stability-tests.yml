@@ -125,7 +125,7 @@ jobs:
           UV_NO_PROGRESS: 1
           UV_QUIET: 1
           PYTHONIOENCODING: utf-8
-        run: uv run run_stability_tests.py --parallel --method local
+        run: uv run run_stability_tests.py --method local
 
       - name: Check pass rate
         if: always()

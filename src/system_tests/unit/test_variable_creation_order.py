@@ -6,7 +6,7 @@ when multiple variables are created in sequence during code execution.
 """
 
 import pytest
-from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 from cuga.backend.cuga_graph.state.agent_state import AgentState
 
 
@@ -39,7 +39,7 @@ print(f"Created: {var1}, {var2}, {var3}, {var4}")
         _locals = {}
 
         # Execute the code
-        output, new_vars = await eval_with_tools_async(
+        output, new_vars = await CodeExecutor.eval_with_tools_async(
             code=code,
             _locals=_locals,
             state=state,
@@ -98,7 +98,7 @@ print(f"Created: {var1}, {var2}, {var3}, {var4}")
         state.variables_manager.add_variable("existing2", name="existing_var2")
 
         # Code that creates new variables in sequence
-        code = """new_var1 = "first_new"
+        code = """new_var1 = existing_var1 + "_new"
 new_var2 = ["second_new"]
 new_var3 = new_var1 + " -> " + str(new_var2)
 print(new_var3)
@@ -108,7 +108,7 @@ print(new_var3)
         _locals = {"existing_var1": "existing1", "existing_var2": "existing2"}
 
         # Execute the code
-        output, new_vars = await eval_with_tools_async(
+        output, new_vars = await CodeExecutor.eval_with_tools_async(
             code=code,
             _locals=_locals,
             state=state,
@@ -167,7 +167,7 @@ print("Created var1 and var2")
 
         _locals1 = {}
 
-        output1, new_vars1 = await eval_with_tools_async(
+        output1, new_vars1 = await CodeExecutor.eval_with_tools_async(
             code=code1,
             _locals=_locals1,
             state=state,
@@ -183,7 +183,7 @@ print("Created var3 and var4")
 
         _locals2 = {}
 
-        output2, new_vars2 = await eval_with_tools_async(
+        output2, new_vars2 = await CodeExecutor.eval_with_tools_async(
             code=code2,
             _locals=_locals2,
             state=state,
@@ -296,7 +296,7 @@ print(json.dumps(results, indent=2))
         }
 
         # Execute the code
-        output, new_vars = await eval_with_tools_async(
+        output, new_vars = await CodeExecutor.eval_with_tools_async(
             code=code,
             _locals=_locals,
             state=state,

@@ -454,7 +454,7 @@ async def execute_in_e2b_sandbox_lite(
     with the user code before executing in E2B.
 
     Args:
-        user_code: User's wrapped Python code (e.g., with __async_main function)
+        user_code: User's wrapped Python code (e.g., with _async_main function)
         context_locals: Dictionary of variables and tools from previous execution
         thread_id: Thread ID for sandbox caching
         apps_list: List of app names (unused in current implementation)
@@ -689,9 +689,9 @@ async def call_api(app_name, api_name, args=None):
 
 # Execute and capture locals
 async def main():
-    __result_locals = await asyncio.wait_for(__async_main(), timeout=30)
+    _result_locals = await asyncio.wait_for(_async_main(), timeout=30)
     print("!!!===!!!")
-    print(__result_locals)
+    print(_result_locals)
 
 if __name__ == "__main__":
     await main()

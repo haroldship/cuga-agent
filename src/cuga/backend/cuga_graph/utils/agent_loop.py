@@ -283,11 +283,145 @@ class AgentLoop:
     async def stream_event(self, event: StreamEvent) -> Generator[str, None, None]:
         yield event.format()
 
-    def get_event_message(self, event: dict) -> StreamEvent:
+    def get_event_message(self, event) -> StreamEvent:
+        # When subgraphs=True, event is a tuple: (namespace_tuple, state_dict)
+        # namespace_tuple is like () for root or (node_name,) for subgraph
+        if isinstance(event, tuple):
+            namespace, state_dict = event
+            logger.info(f"Subgraph event - namespace: {namespace}, state keys: {list(state_dict.keys())}")
+
+            # Get the node name from state_dict keys
+            if not state_dict:
+                return StreamEvent(name="unknown", data="")
+
+            node_name = list(state_dict.keys())[0]
+            state_data = state_dict[node_name]
+
+            logger.debug(
+                f"Node: {node_name}, namespace empty: {not namespace}, state_data keys: {list(state_data.keys()) if isinstance(state_data, dict) else 'not a dict'}"
+            )
+
+            # Check if this is from a subgraph (namespace is not empty)
+            if namespace:
+                logger.info(f"Processing subgraph node: {node_name} from namespace: {namespace}")
+
+                # Handle call_model node from CugaLite subgraph
+                if node_name == "call_model":
+                    logger.debug("Detected call_model node")
+                    # Check if it generated code or text
+                    if "script" in state_data and state_data["script"] and state_data["script"].strip():
+                        # Code generated - show as CodeAgent with JSON
+                        logger.info(f"call_model generated script of length {len(state_data['script'])}")
+                        output = {
+                            "code": state_data["script"],
+                            "execution_output": "",
+                            "steps_summary": [],
+                            "summary": "Code generated, preparing to execute",
+                            "variables": state_data.get("variables_storage", {}),
+                        }
+                        return StreamEvent(name="CodeAgent", data=json.dumps(output))
+                    else:
+                        # Text/reasoning output - show as CodeAgent_Reasoning
+                        logger.info("call_model generated text response (no code)")
+                        messages = state_data.get("chat_messages", [])
+                        if messages:
+                            last_msg = messages[-1]
+                            if hasattr(last_msg, 'content'):
+                                content = last_msg.content
+                            elif isinstance(last_msg, dict):
+                                content = last_msg.get("content", "")
+                            else:
+                                content = str(last_msg)
+                            # Only return if content is not empty
+                            if content and content.strip():
+                                return StreamEvent(name="CodeAgent_Reasoning", data=content)
+                        # Skip empty events
+                        logger.debug("Skipping empty call_model event")
+                        return StreamEvent(name="", data="")
+
+                # Handle sandbox node from CugaLite subgraph
+                elif node_name == "sandbox":
+                    logger.info("Detected sandbox node - formatting execution output")
+
+                    # Extract execution output from chat_messages
+                    execution_output = ""
+                    messages = state_data.get("chat_messages", [])
+                    if messages:
+                        logger.debug(f"Found {len(messages)} messages in sandbox state")
+                        for msg in reversed(messages):
+                            # Handle both BaseMessage objects and dicts
+                            if hasattr(msg, 'content'):
+                                content = msg.content
+                            elif isinstance(msg, dict):
+                                content = msg.get("content", "")
+                            else:
+                                continue
+
+                            if "Execution output:" in content:
+                                execution_output = content.split("Execution output:\n")[-1]
+                                logger.debug(f"Extracted execution output: {execution_output[:100]}...")
+                                break
+
+                    # Only return event if we have meaningful execution output
+                    if execution_output and execution_output.strip():
+                        output = {
+                            "code": "",
+                            "execution_output": execution_output,
+                            "steps_summary": [],
+                            "summary": "Code execution completed",
+                            "variables": state_data.get("variables_storage", {}),
+                        }
+                        logger.info(
+                            f"Returning sandbox output with execution_output length: {len(execution_output)}"
+                        )
+                        return StreamEvent(name="CodeAgent", data=json.dumps(output))
+                    else:
+                        # Skip empty sandbox events
+                        logger.debug("Skipping empty sandbox event")
+                        return StreamEvent(name="", data="")
+
+                # Default handling for other subgraph nodes
+                logger.debug(f"Unhandled subgraph node: {node_name}")
+                return StreamEvent(name=str(node_name), data="")
+
+            # Root level node (namespace is empty tuple)
+            logger.debug(f"Processing root level node: {node_name}")
+            event = state_dict  # Use the state_dict as event for regular processing
+
+        # Regular node handling (when event is a dict)
         first_key = list(event.keys())[0]
         logger.info("Current Node: {}".format(first_key))
         if first_key == "__interrupt__":
             return StreamEvent(name=str(first_key), data="")
+
+        # Skip events with None state (routing commands without updates)
+        if event[first_key] is None:
+            logger.debug(f"Skipping event with None state for node: {first_key}")
+            return StreamEvent(name=str(first_key), data="")
+
+        # Handle subgraph events (CugaLiteSubgraph, CugaLiteCallback) that don't have full AgentState
+        # These only have shared keys like chat_messages, final_answer, variables_storage
+        event_data = event[first_key]
+        is_subgraph_event = first_key in ["CugaLiteSubgraph", "CugaLiteCallback"]
+
+        # Check if this looks like a subgraph event (missing required AgentState fields)
+        if not is_subgraph_event and isinstance(event_data, dict):
+            is_subgraph_event = "input" not in event_data or "url" not in event_data
+
+        if is_subgraph_event:
+            logger.debug(f"Detected subgraph event for node: {first_key}")
+            # For subgraph events, extract final_answer or last chat message
+            event_val = ""
+            if isinstance(event_data, dict):
+                if event_data.get("final_answer"):
+                    event_val = event_data["final_answer"]
+                elif event_data.get("chat_messages"):
+                    last_msg = event_data["chat_messages"][-1]
+                    if hasattr(last_msg, 'content'):
+                        event_val = last_msg.content
+            # Display subgraph completions as CodeAgent for consistency
+            return StreamEvent(name="CodeAgent", data=event_val or "")
+
         state_obj = AgentState(**event[first_key])
         messages = state_obj.messages
         if messages:
@@ -321,6 +455,7 @@ class AgentLoop:
                 "thread_id": self.thread_id,
             },
             stream_mode="updates",
+            subgraphs=True,
         )
 
     def get_langfuse_trace_id(self) -> Optional[str]:
@@ -330,18 +465,31 @@ class AgentLoop:
         return None
 
     def get_output(self, event):
+        logger.debug(f"get_output called with event type: {type(event)}")
+
         state: AgentState = AgentState(
             **self.graph.get_state({"configurable": {"thread_id": self.thread_id}}).values
         )
         msg: AIMessage = state.messages[-1] if len(state.messages) > 0 else None
-        logger.info("Calling get output {}".format(",".join(list(event.keys()))))
+
+        # Handle tuple format from subgraphs=True
+        if isinstance(event, tuple):
+            namespace, state_dict = event
+            event_keys = list(state_dict.keys())
+            logger.debug(f"Event is tuple - namespace: {namespace}, keys: {event_keys}")
+        else:
+            event_keys = list(event.keys())
+            logger.debug(f"Event is dict - keys: {event_keys}")
+
+        logger.info("Calling get output {}".format(",".join(event_keys)))
 
         # Print Langfuse trace ID if available
         trace_id = self.get_langfuse_trace_id()
         if trace_id:
             print(f"Langfuse Trace ID: {trace_id}")
             logger.info(f"Langfuse Trace ID: {trace_id}")
-        if "__interrupt__" in list(event.keys()):
+        if "__interrupt__" in event_keys:
+            logger.debug("Detected __interrupt__ in event_keys")
             answer = ""
             if msg.tool_calls and len(msg.tool_calls) > 0:
                 return AgentLoopAnswer(
@@ -350,7 +498,8 @@ class AgentLoop:
             else:
                 return AgentLoopAnswer(end=True, interrupt=True, has_tools=False, answer=answer, tools=[])
 
-        if "ReuseAgent" in list(event.keys()):
+        if "ReuseAgent" in event_keys:
+            logger.debug("Detected ReuseAgent in event_keys")
             return AgentLoopAnswer(
                 end=True,
                 has_tools=False,
@@ -359,9 +508,15 @@ class AgentLoop:
                 tools=msg.tool_calls,
             )
 
-        if "FinalAnswerAgent" in list(event.keys()) or "CodeAgent" in list(event.keys()):
+        if "FinalAnswerAgent" in event_keys or "CodeAgent" in event_keys:
+            logger.debug(
+                f"Detected FinalAnswerAgent or CodeAgent in event_keys. final_answer: {state.final_answer[:100] if state.final_answer else 'None'}..."
+            )
             return AgentLoopAnswer(end=True, has_tools=False, answer=state.final_answer, tools=msg.tool_calls)
         else:
+            logger.debug(
+                f"No terminal agent detected. Returning intermediate answer with msg.content: {msg.content[:100] if msg and msg.content else 'None'}..."
+            )
             return AgentLoopAnswer(end=False, has_tools=True, answer=msg.content, tools=msg.tool_calls)
 
     async def run_stream(self, state: Optional[AgentState] = None, resume=None):
@@ -369,6 +524,12 @@ class AgentLoop:
         event = {}
         async for event in event_stream:
             event_msg = self.get_event_message(event)
+            # Skip empty events (events with no name or no data)
+            if not event_msg.name or (not event_msg.data and event_msg.name != "__interrupt__"):
+                logger.debug(
+                    f"Skipping empty event: name='{event_msg.name}', data='{event_msg.data[:50] if event_msg.data else ''}'"
+                )
+                continue
             # logger.debug(f"current event: {event_msg.format()}")
             yield event_msg.format()
         yield self.get_output(event)

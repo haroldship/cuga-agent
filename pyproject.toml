@@ -30,6 +30,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.9",
     "pyyaml>=6.0.3",
     "pymilvus>=2.6.4",
+    "langchain-groq>=0.3.8",
     "tavily-python",
     "e2b-code-interpreter>=2.4.1",
 ]
@@ -101,13 +102,9 @@ dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=1.1.0",
     "cugaviz",
-    "langchain-groq>=0.3.8",
     "pre-commit>=4.3.0",
     "questionary>=2.1.1",
     "rich>=14.2.0",
-]
-groq = [
-    "langchain-groq>=0.3.8",
 ]
 google-genai = [
     "langchain-google-genai>=2.0.11",

@@ -1,13 +1,11 @@
 """Unit tests for E2B sandbox integration in CUGA Lite mode."""
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock, AsyncMock
 
-from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import (
-    _filter_new_variables,
-    execute_in_e2b_sandbox_lite,
-    eval_with_tools_async,
-)
+from cuga.backend.cuga_graph.nodes.cuga_lite.executors.common import VariableUtils
+from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
+from cuga.backend.tools_env.code_sandbox.e2b_sandbox import execute_in_e2b_sandbox_lite
 from cuga.backend.cuga_graph.state.agent_state import AgentState
 
 
@@ -26,7 +24,7 @@ class TestFilterNewVariables:
             'new_none': None,
         }
 
-        result = _filter_new_variables(all_locals, original_keys)
+        result = VariableUtils.filter_new_variables(all_locals, original_keys)
 
         assert len(result) == 5
         assert result['new_str'] == 'hello'
@@ -45,7 +43,7 @@ class TestFilterNewVariables:
             'nested': {'list': [1, 2], 'dict': {'x': 10}},
         }
 
-        result = _filter_new_variables(all_locals, original_keys)
+        result = VariableUtils.filter_new_variables(all_locals, original_keys)
 
         assert len(result) == 4
         assert result['my_list'] == [1, 2, 3]
@@ -63,7 +61,7 @@ class TestFilterNewVariables:
             '_internal': 'hidden',
         }
 
-        result = _filter_new_variables(all_locals, original_keys)
+        result = VariableUtils.filter_new_variables(all_locals, original_keys)
 
         assert len(result) == 1
         assert result == {'public_var': 'visible'}
@@ -89,7 +87,7 @@ class TestFilterNewVariables:
             'module': test_module,
         }
 
-        result = _filter_new_variables(all_locals, original_keys)
+        result = VariableUtils.filter_new_variables(all_locals, original_keys)
 
         assert len(result) == 1
         assert result == {'serializable': 'keep'}
@@ -99,7 +97,7 @@ class TestFilterNewVariables:
         original_keys = {'var1', 'var2'}
         all_locals = {'var1': 'a', 'var2': 'b'}
 
-        result = _filter_new_variables(all_locals, original_keys)
+        result = VariableUtils.filter_new_variables(all_locals, original_keys)
 
         assert result == {}
 
@@ -123,7 +121,6 @@ class TestExecuteInE2BSandbox:
             mock_execute.return_value = "Hello from E2B\nResult: 42\n!!!===!!!\n{'result': 42}"
 
             result, locals_dict = await execute_in_e2b_sandbox_lite("print('test')")
-
             assert "Hello from E2B" in result
             assert "Result: 42" in result
             assert locals_dict == {'result': 42}
@@ -149,8 +146,7 @@ class TestExecuteInE2BSandbox:
             mock_execute.return_value = "Hello"
 
             result, locals_dict = await execute_in_e2b_sandbox_lite("print('Hello')")
-
-            assert result == "Hello"
+            assert result.strip() == "Hello"
             assert locals_dict == {}
 
 
@@ -160,12 +156,18 @@ class TestEvalWithToolsAsyncE2B:
     @pytest.mark.asyncio
     async def test_eval_with_e2b_enabled(self):
         """Test eval_with_tools_async routes to E2B when enabled."""
-        with patch('cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.settings') as mock_settings:
-            with patch(
-                'cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.execute_in_e2b_sandbox_lite'
-            ) as mock_e2b:
+        mock_state = MagicMock()
+        mock_state.variables_manager = MagicMock()
+
+        with patch(
+            'cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor.settings'
+        ) as mock_settings:
+            with patch.object(CodeExecutor, '_get_e2b_executor') as mock_get_executor:
                 mock_settings.advanced_features.e2b_sandbox = True
-                mock_e2b.return_value = ("42", {'result': 42})
+
+                mock_executor = MagicMock()
+                mock_executor.execute_for_cuga_lite = AsyncMock(return_value=("42", {'result': 42}))
+                mock_get_executor.return_value = mock_executor
 
                 code = "result = 40 + 2\nprint(result)"
                 _locals = {}
@@ -174,10 +176,10 @@ class TestEvalWithToolsAsyncE2B:
                     url="",
                 )
 
-                output, new_vars = await eval_with_tools_async(code, _locals, state)
+                output, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals, state)
 
                 # Verify mock was called
-                mock_e2b.assert_called_once()
+                mock_executor.execute_for_cuga_lite.assert_called_once()
 
                 # Verify new variables
                 assert new_vars == {'result': 42}
@@ -191,7 +193,12 @@ class TestEvalWithToolsAsyncE2B:
     @pytest.mark.asyncio
     async def test_eval_with_e2b_disabled(self):
         """Test local execution when E2B is disabled."""
-        with patch('cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.settings') as mock_settings:
+        mock_state = MagicMock()
+        mock_state.variables_manager = MagicMock()
+
+        with patch(
+            'cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor.settings'
+        ) as mock_settings:
             mock_settings.advanced_features.e2b_sandbox = False
 
             code = "y = 20"
@@ -201,7 +208,7 @@ class TestEvalWithToolsAsyncE2B:
                 url="",
             )
 
-            output, new_vars = await eval_with_tools_async(code, _locals, state)
+            output, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals, state)
 
             # Verify new variables
             assert new_vars == {'y': 20}
@@ -216,32 +223,28 @@ class TestEvalWithToolsAsyncE2B:
     @pytest.mark.asyncio
     async def test_eval_filters_internal_variables(self):
         """Test that internal variables are filtered from results."""
-        with patch('cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.settings') as mock_settings:
-            with patch(
-                'cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.execute_in_e2b_sandbox_lite'
-            ) as mock_e2b:
-                mock_settings.advanced_features.e2b_sandbox = True
+        mock_state = MagicMock()
+        mock_state.variables_manager = MagicMock()
 
-                # E2B returns both public and internal variables
-                mock_e2b.return_value = (
-                    "Success",
-                    {'public_var': 'visible', '_private_var': 'hidden', '__dunder__': 'hidden', 'result': 42},
-                )
+        # Test with local execution but with code that creates internal variables
+        # This tests the filtering logic without needing E2B mocking
+        code = """public_var = 'visible'
+_private_var = 'hidden'
+_dunder = 'hidden'
+result = 42"""
+        _locals = {}
+        state = AgentState(
+            input="test task",
+            url="",
+        )
 
-                code = "result = 42"
-                _locals = {}
-                state = AgentState(
-                    input="test task",
-                    url="",
-                )
+        output, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals, state)
 
-                output, new_vars = await eval_with_tools_async(code, _locals, state)
-
-                # Only public variables should be in new_vars
-                assert 'public_var' in new_vars
-                assert 'result' in new_vars
-                assert '_private_var' not in new_vars
-                assert '__dunder__' not in new_vars
+        # Only public variables should be in new_vars
+        assert 'public_var' in new_vars
+        assert 'result' in new_vars
+        assert '_private_var' not in new_vars
+        assert '_dunder' not in new_vars
 
 
 class TestE2BWithVariablesAndTools:
@@ -295,13 +298,21 @@ result = {
 print("Done")  # Prevent auto-print of last line
 """
 
-        with patch('cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.settings') as mock_settings:
-            with patch(
-                'cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base.execute_in_e2b_sandbox_lite'
-            ) as mock_e2b:
+        mock_state = MagicMock()
+        mock_state.variables_manager = MagicMock()
+        mock_state.variables_manager.get_variables_formatted.return_value = (
+            "# Variables from state\ntarget_account = 'acc_1'\nthreshold = 1000000.0\n"
+        )
+        mock_state.variables_manager.get_variable_count.return_value = 2
+
+        with patch(
+            'cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor.settings'
+        ) as mock_settings:
+            with patch.object(CodeExecutor, '_get_e2b_executor') as mock_get_executor:
                 mock_settings.advanced_features.e2b_sandbox = True
 
-                # Mock E2B execution to return expected output
+                # Mock E2B executor
+                mock_executor = MagicMock()
                 mock_output = """Account: Acme Corp
 Revenue: $1,500,000
 High value: True
@@ -318,7 +329,8 @@ Done"""
                         'is_high_value': True,
                     },
                 }
-                mock_e2b.return_value = (mock_output, mock_result)
+                mock_executor.execute_for_cuga_lite = AsyncMock(return_value=(mock_output, mock_result))
+                mock_get_executor.return_value = mock_executor
 
                 state = AgentState(
                     input="test task",
@@ -326,7 +338,7 @@ Done"""
                 )
 
                 # Execute in E2B
-                output, new_vars = await eval_with_tools_async(code, _locals, state)
+                output, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals, state)
 
                 # Verify output
                 assert "Account: Acme Corp" in output

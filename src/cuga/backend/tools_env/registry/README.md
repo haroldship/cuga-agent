@@ -36,11 +36,11 @@ services:
   - service_name:
       url: "https://api.example.com/openapi.json"
       description: "Description of the service"
-      type: "openapi"  # Optional, inferred from URL
-      include:  # Optional: filter specific operations
+      type: "openapi" # Optional, inferred from URL
+      include: # Optional: filter specific operations
         - "operation_id_1"
         - "operation_id_2"
-      api_overrides:  # Optional: customize operations
+      api_overrides: # Optional: customize operations
         - operation_id: "get_users"
           description: "Custom description"
           drop_request_body_parameters: ["internal_param"]
@@ -50,8 +50,8 @@ services:
 mcpServers:
   server_name:
     url: "http://localhost:8000/sse"
-    command: "python"  # Optional: for local MCP servers
-    args: ["-m", "my_mcp_server"]  # Optional: command arguments
+    command: "python" # Optional: for local MCP servers
+    args: ["-m", "my_mcp_server"] # Optional: command arguments
 
 # TRM (Tool Runtime Manager) services
 trmServices:
@@ -76,7 +76,7 @@ services:
   - digital_sales:
       url: "https://digitalsales.example.com/openapi.json"
       description: "Digital Sales API for customer management"
-      include:  # Only include specific operations
+      include: # Only include specific operations
         - "getMyAccounts"
         - "getAccountsTpp"
         - "getJobRoles"
@@ -87,6 +87,7 @@ services:
 ```
 
 **Features:**
+
 - Automatic parameter extraction and validation
 - Response schema parsing
 - Security scheme detection
@@ -139,13 +140,13 @@ mcpServers:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/documents"]
     description: "Document management file system server"
-  
+
   # File system server for project files
   project_fs:
-    command: "npx" 
+    command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/projects", "--readonly"]
     description: "Read-only access to project files"
-  
+
   # Custom Python file system server
   custom_fs:
     command: "python"
@@ -181,7 +182,7 @@ services:
       url: "https://sales.example.com/openapi.json"
       description: "Sales management API"
       include: ["getAccounts", "createLead", "updateContact"]
-      
+
   - inventory_api:
       url: "https://inventory.example.com/api/docs/openapi.json"
       description: "Inventory management system"
@@ -196,26 +197,26 @@ mcpServers:
   customer_tools:
     url: "http://customer-tools.example.com:8000/sse"
     description: "Customer relationship management tools"
-  
+
   # Local file system server
   documents:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/shared/documents"]
     description: "Document management system"
-  
+
   # Local Python MCP server
   data_processor:
     command: "python"
     args: ["-m", "data_mcp_server", "--config", "config.json"]
     description: "Data processing and analysis tools"
-  
+
   # Git repository server
   code_repo:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-git", "/path/to/repo"]
     description: "Git repository operations"
 
-# TRM Services  
+# TRM Services
 trmServices:
   analytics:
     url: "http://analytics.internal:9000"
@@ -236,29 +237,34 @@ mcpServers:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/workspace"]
     description: "File management operations"
-  
+
   # Read-only document access
   docs_readonly:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/documents", "--readonly"]
     description: "Read-only access to documents"
-  
+
   # Multiple directory access
   multi_dir:
     command: "python"
     args: ["-m", "filesystem_mcp", "--dirs", "/Users/projects,/Users/temp", "--max-depth", "3"]
     description: "Multi-directory file system access"
-  
+
   # Secure file server with restrictions
   secure_fs:
     command: "python"
-    args: [
-      "-m", "secure_fs_mcp",
-      "--root", "/safe/sandbox",
-      "--allowed-extensions", ".txt,.md,.json,.yaml",
-      "--max-file-size", "5MB",
-      "--no-hidden-files"
-    ]
+    args:
+      [
+        "-m",
+        "secure_fs_mcp",
+        "--root",
+        "/safe/sandbox",
+        "--allowed-extensions",
+        ".txt,.md,.json,.yaml",
+        "--max-file-size",
+        "5MB",
+        "--no-hidden-files",
+      ]
     description: "Secure file system with safety restrictions"
 ```
 
@@ -294,8 +300,8 @@ All services return APIs in a consistent format:
       }
     ],
     "response_schemas": {
-      "success": {"result": "object"},
-      "failure": {"error": "string"}
+      "success": { "result": "object" },
+      "failure": { "error": "string" }
     }
   }
 }
@@ -356,7 +362,7 @@ When creating MCP servers, it's recommended to include response schema informati
 
 **Example Implementation:**
 
-```python
+````python
 from fastmcp import FastMCP
 from fastmcp.server.openapi import OpenAPITool
 
@@ -372,11 +378,12 @@ mcp = FastMCP.from_openapi(
     client=client,
     mcp_component_fn=customize_components,
 )
-```
+````
 
 **Alternative Approaches:**
 
 1. **Schema as Dictionary**: Include the response schema as a structured dictionary in the description:
+
    ```python
    component.description = f"{component.description}\n\nExpected Response Format:\n{json.dumps(response_schema, indent=2)}"
    ```
@@ -394,6 +401,7 @@ mcp = FastMCP.from_openapi(
 **Registry Implementation:**
 
 The Tools Environment Registry addresses this limitation by:
+
 - Extracting response schemas from OpenAPI specifications when available
 - Providing consistent response schema information across all service types
 - Including response schemas in the standardized API format
@@ -404,7 +412,7 @@ When developing your own MCP servers, you can define custom output schemas using
 
 ```python
 @mcp.tool(output_schema={
-    "type": "object", 
+    "type": "object",
     "properties": {
         "data": {"type": "string"},
         "metadata": {"type": "object"}
@@ -426,17 +434,21 @@ See `docs/examples/client_package_usage/fast_mcp_example.py` for a complete impl
 ### Common Issues
 
 1. **MCP Server Connection Failed**
+
    ```
    Error: Failed to connect to MCP server at http://localhost:8000/sse
    ```
+
    - Ensure the MCP server is running and accessible
    - Check the URL and port configuration
    - Verify network connectivity
 
 2. **OpenAPI Schema Loading Failed**
+
    ```
    Error: Failed to fetch OpenAPI schema from https://api.example.com/openapi.json
    ```
+
    - Verify the URL is accessible
    - Check authentication requirements
    - Ensure the schema is valid OpenAPI format
@@ -525,10 +537,10 @@ app = FastMCP()
 def analyze_data(data: str, method: str = "default") -> dict:
     """Analyze data using specified method with structured output"""
     import datetime
-    
+
     # Your analysis logic here
     result = f"Analysis result for {data} using {method}"
-    
+
     return {
         "result": result,
         "confidence": 0.95,
@@ -539,7 +551,7 @@ def analyze_data(data: str, method: str = "default") -> dict:
     }
 
 @app.tool("simple_tool", output_schema={
-    "type": "object", 
+    "type": "object",
     "properties": {
         "data": {"type": "string"},
         "status": {"type": "string"}

@@ -788,13 +788,25 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
 
         return all_events
 
-    def _assert_answer_event(self, all_events: List[Dict[str, Any]], expected_keywords: List[str] = None):
+    def _assert_answer_event(
+        self,
+        all_events: List[Dict[str, Any]],
+        expected_keywords: List[str] = None,
+        keyword_match_mode: str = "all",
+        operator: str = "contains",
+    ):
         """
         Common assertion logic for answer events.
 
         Args:
             all_events: List of events from the stream
             expected_keywords: Optional list of keywords that should be in the answer
+            keyword_match_mode: Mode for keyword matching - "all" (default) or "any"
+                - "all": All keywords must be present (AND logic)
+                - "any": At least one keyword must be present (OR logic)
+            operator: Operator for keyword checking - "contains" (default) or "not_contains"
+                - "contains": Keywords should be present in the answer
+                - "not_contains": Keywords should NOT be present in the answer
         """
         print("\n--- Performing assertions ---")
 
@@ -815,10 +827,46 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
         # Keyword validation if provided
         if expected_keywords:
             answer_str = str(answer_data).lower()
-            for keyword in expected_keywords:
-                self.assertIn(keyword.lower(), answer_str, f"Answer does not contain '{keyword}'.")
-            print(f"Assertion Passed: Answer contains expected keywords: {expected_keywords}")
+            # TODO replace this inside the agent
+            answer_str = answer_str.replace("\u202f", " ")
 
-        print("\n--- All assertions passed! ---")
+            if operator == "not_contains":
+                # Check that keywords do NOT exist in the answer
+                if keyword_match_mode == "any":
+                    # OR logic: at least one keyword must be absent
+                    absent_keywords = [kw for kw in expected_keywords if kw.lower() not in answer_str]
+                    self.assertTrue(
+                        len(absent_keywords) > 0,
+                        f"Answer should not contain at least one of the keywords: {expected_keywords}. Got: {answer_str}",
+                    )
+                    print(
+                        f"Assertion Passed: Answer does not contain at least one keyword. Absent: {absent_keywords}"
+                    )
+                else:
+                    # AND logic (default): all keywords must be absent
+                    for keyword in expected_keywords:
+                        self.assertNotIn(
+                            keyword.lower(), answer_str, f"Answer should not contain '{keyword}' but it does."
+                        )
+                    print(
+                        f"Assertion Passed: Answer does not contain any of the keywords: {expected_keywords}"
+                    )
+            else:
+                # Default "contains" operator
+                if keyword_match_mode == "any":
+                    # OR logic: at least one keyword must be present
+                    matched_keywords = [kw for kw in expected_keywords if kw.lower() in answer_str]
+                    self.assertTrue(
+                        len(matched_keywords) > 0,
+                        f"Answer does not contain any of the expected keywords: {expected_keywords}. Got: {answer_str}",
+                    )
+                    print(
+                        f"Assertion Passed: Answer contains at least one expected keyword. Matched: {matched_keywords}"
+                    )
+                else:
+                    # AND logic (default): all keywords must be present
+                    for keyword in expected_keywords:
+                        self.assertIn(keyword.lower(), answer_str, f"Answer does not contain '{keyword}'.")
+                    print(f"Assertion Passed: Answer contains all expected keywords: {expected_keywords}")
 
         print("\n--- All assertions passed! ---")

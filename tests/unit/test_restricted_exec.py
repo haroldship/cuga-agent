@@ -1,5 +1,5 @@
 """
-Unit tests for restricted execution environment in cuga_agent_base.py
+Unit tests for restricted execution environment in CodeExecutor
 Tests that safe code executes properly while dangerous operations are blocked.
 """
 
@@ -69,7 +69,7 @@ class TestRestrictedExecution:
     @pytest.mark.asyncio
     async def test_valid_code_execution(self, mock_tools):
         """Test that valid code with tool calls executes successfully."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         valid_code = """
 # Read contacts
@@ -95,7 +95,7 @@ print(result)
 """
 
         # Pass mock_tools as _locals parameter so they're available in the execution context
-        result, new_vars = await eval_with_tools_async(valid_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(valid_code, _locals=mock_tools)
 
         assert "Found 3 contacts and 3 accounts" in result
         assert "Error" not in result
@@ -103,14 +103,14 @@ print(result)
     @pytest.mark.asyncio
     async def test_block_os_module_import(self, mock_tools):
         """Test that importing os module is blocked."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 import os
 result = os.environ['HOME']
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -118,14 +118,14 @@ result = os.environ['HOME']
     @pytest.mark.asyncio
     async def test_block_os_environ_access(self, mock_tools):
         """Test that accessing os.environ is blocked."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 import os
 env_var = os.environ.get('SECRET_KEY', 'default')
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -133,14 +133,14 @@ env_var = os.environ.get('SECRET_KEY', 'default')
     @pytest.mark.asyncio
     async def test_block_subprocess_module(self, mock_tools):
         """Test that subprocess module is blocked."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 import subprocess
 result = subprocess.run(['ls'], capture_output=True)
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -148,14 +148,14 @@ result = subprocess.run(['ls'], capture_output=True)
     @pytest.mark.asyncio
     async def test_block_sys_module(self, mock_tools):
         """Test that sys module is blocked."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 import sys
 result = sys.version
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -163,14 +163,14 @@ result = sys.version
     @pytest.mark.asyncio
     async def test_block_open_builtin(self, mock_tools):
         """Test that open() builtin is not available."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 with open('/etc/passwd', 'r') as f:
     data = f.read()
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "NameError" in result or "not defined" in result.lower()
@@ -178,13 +178,13 @@ with open('/etc/passwd', 'r') as f:
     @pytest.mark.asyncio
     async def test_block_eval_builtin(self, mock_tools):
         """Test that eval() builtin is not available."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 result = eval('2 + 2')
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "NameError" in result or "not defined" in result.lower()
@@ -192,13 +192,13 @@ result = eval('2 + 2')
     @pytest.mark.asyncio
     async def test_block_exec_builtin(self, mock_tools):
         """Test that exec() builtin is not available."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 exec('x = 5')
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "NameError" in result or "not defined" in result.lower()
@@ -206,13 +206,13 @@ exec('x = 5')
     @pytest.mark.asyncio
     async def test_block_compile_builtin(self, mock_tools):
         """Test that compile() builtin is not available."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 code = compile('x = 5', '<string>', 'exec')
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "NameError" in result or "not defined" in result.lower()
@@ -220,7 +220,7 @@ code = compile('x = 5', '<string>', 'exec')
     @pytest.mark.asyncio
     async def test_allow_json_module(self, mock_tools):
         """Test that json module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         safe_code = """
 import json
@@ -229,7 +229,7 @@ result = json.loads(data)
 print(result['key'])
 """
 
-        result, new_vars = await eval_with_tools_async(safe_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(safe_code, _locals=mock_tools)
 
         assert "value" in result
         assert "Error" not in result
@@ -237,7 +237,7 @@ print(result['key'])
     @pytest.mark.asyncio
     async def test_allow_asyncio_module(self, mock_tools):
         """Test that asyncio module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         safe_code = """
 import asyncio
@@ -246,7 +246,7 @@ result = "asyncio works"
 print(result)
 """
 
-        result, new_vars = await eval_with_tools_async(safe_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(safe_code, _locals=mock_tools)
 
         assert "asyncio works" in result
         assert "Error" not in result
@@ -254,7 +254,7 @@ print(result)
     @pytest.mark.asyncio
     async def test_allow_math_module(self, mock_tools):
         """Test that math module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         safe_code = """
 import math
@@ -262,7 +262,7 @@ result = math.sqrt(16)
 print(f"Square root: {result}")
 """
 
-        result, new_vars = await eval_with_tools_async(safe_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(safe_code, _locals=mock_tools)
 
         assert "4.0" in result
         assert "Error" not in result
@@ -270,7 +270,7 @@ print(f"Square root: {result}")
     @pytest.mark.asyncio
     async def test_allow_datetime_module(self, mock_tools):
         """Test that datetime module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         safe_code = """
 import datetime
@@ -279,7 +279,7 @@ result = f"Year: {now.year}"
 print(result)
 """
 
-        result, new_vars = await eval_with_tools_async(safe_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(safe_code, _locals=mock_tools)
 
         assert "Year:" in result
         assert "Error" not in result
@@ -287,7 +287,7 @@ print(result)
     @pytest.mark.asyncio
     async def test_block_pathlib_module(self, mock_tools):
         """Test that pathlib module is blocked."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         dangerous_code = """
 import pathlib
@@ -295,7 +295,7 @@ path = pathlib.Path('/etc')
 files = list(path.iterdir())
 """
 
-        result, new_vars = await eval_with_tools_async(dangerous_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(dangerous_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -303,7 +303,7 @@ files = list(path.iterdir())
     @pytest.mark.asyncio
     async def test_complex_valid_workflow(self, mock_tools):
         """Test a complex but valid workflow similar to the user's example."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         complex_code = """
 # Step 1: Read contacts
@@ -357,7 +357,7 @@ email_content = email_template.replace("<results>", results_text)
 print(email_content)
 """
 
-        result, new_vars = await eval_with_tools_async(complex_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(complex_code, _locals=mock_tools)
 
         # Check that the email was drafted correctly
         assert "Email Template:" in result
@@ -373,7 +373,7 @@ print(email_content)
     @pytest.mark.asyncio
     async def test_basic_python_operations_work(self, mock_tools):
         """Test that basic Python operations still work."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         basic_code = """
 # Lists and dicts
@@ -390,7 +390,7 @@ result = f"Squared: {squared}, Text: {upper_text}, Info: {info['name']}"
 print(result)
 """
 
-        result, new_vars = await eval_with_tools_async(basic_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(basic_code, _locals=mock_tools)
 
         assert "[1, 4, 9, 16, 25]" in result
         assert "HELLO WORLD" in result
@@ -400,7 +400,7 @@ print(result)
     @pytest.mark.asyncio
     async def test_variables_preserved_in_locals(self, mock_tools):
         """Test that variables and tools are available through _locals."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         # Add some initial variables to _locals
         locals_with_vars = {
@@ -421,7 +421,7 @@ final_result = f"Calculation: {result}, Emails: {email_count}"
 print(final_result)
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=locals_with_vars)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=locals_with_vars)
 
         assert "Calculation: 500" in result
         assert "Emails: 3" in result
@@ -432,7 +432,7 @@ print(final_result)
     @pytest.mark.asyncio
     async def test_re_module_works(self, mock_tools):
         """Test that re (regex) module is allowed and works."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 import re
@@ -444,7 +444,7 @@ matches = re.findall(pattern, text)
 print(f"Found emails: {matches}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "alice@example.com" in result
         assert "Error" not in result
@@ -452,7 +452,7 @@ print(f"Found emails: {matches}")
     @pytest.mark.asyncio
     async def test_collections_module(self, mock_tools):
         """Test that collections module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 from collections import defaultdict, Counter
@@ -468,7 +468,7 @@ counter = Counter(items)
 print(f"DefaultDict: {dict(data)}, Counter: {counter}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "DefaultDict:" in result
         assert "Counter:" in result
@@ -477,7 +477,7 @@ print(f"DefaultDict: {dict(data)}, Counter: {counter}")
     @pytest.mark.asyncio
     async def test_itertools_module(self, mock_tools):
         """Test that itertools module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 from itertools import chain, combinations
@@ -491,7 +491,7 @@ combos = list(combinations([1, 2, 3], 2))
 print(f"Chained: {combined}, Combos: {combos}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "[1, 2, 3, 4]" in result
         assert "Combos:" in result
@@ -500,7 +500,7 @@ print(f"Chained: {combined}, Combos: {combos}")
     @pytest.mark.asyncio
     async def test_functools_module(self, mock_tools):
         """Test that functools module is allowed."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 from functools import reduce
@@ -511,7 +511,7 @@ product = reduce(lambda x, y: x * y, numbers)
 print(f"Product: {product}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "120" in result
         assert "Error" not in result
@@ -519,7 +519,7 @@ print(f"Product: {product}")
     @pytest.mark.asyncio
     async def test_locals_and_vars_builtins(self, mock_tools):
         """Test that locals() and vars() builtins work."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 x = 10
@@ -540,7 +540,7 @@ obj_vars = vars(obj)
 print(f"Has x: {has_x}, Obj value: {obj_vars['value']}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Has x: True" in result
         assert "Obj value: 42" in result
@@ -549,7 +549,7 @@ print(f"Has x: {has_x}, Obj value: {obj_vars['value']}")
     @pytest.mark.asyncio
     async def test_list_comprehensions_and_generators(self, mock_tools):
         """Test that list comprehensions and generators work."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 # List comprehension
@@ -565,7 +565,7 @@ matrix = [[i*j for j in range(3)] for i in range(3)]
 print(f"Squares: {squares}, Doubled: {doubled}, Matrix row 2: {matrix[2]}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "[0, 1, 4, 9, 16]" in result
         assert "[0, 2, 4, 6, 8]" in result
@@ -574,7 +574,7 @@ print(f"Squares: {squares}, Doubled: {doubled}, Matrix row 2: {matrix[2]}")
     @pytest.mark.asyncio
     async def test_exception_handling(self, mock_tools):
         """Test that exception handling works within the code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 result = None
@@ -587,7 +587,7 @@ except ZeroDivisionError:
 print(result)
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Caught division by zero" in result
         assert "Error during execution" not in result
@@ -595,7 +595,7 @@ print(result)
     @pytest.mark.asyncio
     async def test_multiple_tool_calls_in_sequence(self, mock_tools):
         """Test multiple async tool calls in sequence."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 # First tool call
@@ -613,7 +613,7 @@ account_count = len(accounts['items'])
 print(f"Contacts: {contact_count}, CRM: {crm_count}, Accounts: {account_count}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Contacts: 3" in result
         assert "CRM: 3" in result
@@ -623,7 +623,7 @@ print(f"Contacts: {contact_count}, CRM: {crm_count}, Accounts: {account_count}")
     @pytest.mark.asyncio
     async def test_new_variables_captured(self, mock_tools):
         """Test that new variables are properly captured in new_vars."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 my_var = "test_value"
@@ -632,7 +632,7 @@ my_list = [1, 2, 3]
 my_dict = {'key': 'value'}
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         # Check that variables were captured
         assert 'my_var' in new_vars
@@ -645,7 +645,7 @@ my_dict = {'key': 'value'}
     @pytest.mark.asyncio
     async def test_class_definition_and_usage(self, mock_tools):
         """Test that class definitions work."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 class Contact:
@@ -661,7 +661,7 @@ info = contact.get_info()
 print(info)
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Alice <alice@example.com>" in result
         assert "Error" not in result
@@ -669,7 +669,7 @@ print(info)
     @pytest.mark.asyncio
     async def test_lambda_functions(self, mock_tools):
         """Test that lambda functions work."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 # Simple lambda
@@ -686,7 +686,7 @@ evens = list(filter(lambda x: x % 2 == 0, numbers))
 print(f"Square: {result1}, Doubled: {doubled}, Evens: {evens}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Square: 25" in result
         assert "[2, 4, 6, 8]" in result
@@ -696,7 +696,7 @@ print(f"Square: {result1}, Doubled: {doubled}, Evens: {evens}")
     @pytest.mark.asyncio
     async def test_string_formatting_methods(self, mock_tools):
         """Test various string formatting methods."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 name = "Alice"
@@ -714,7 +714,7 @@ percent_result = "%s is %d years old" % (name, age)
 print(f"F-string: {f_result}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Alice is 30 years old" in result
         assert "Error" not in result
@@ -722,7 +722,7 @@ print(f"F-string: {f_result}")
     @pytest.mark.asyncio
     async def test_nested_data_structures(self, mock_tools):
         """Test working with nested data structures."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 # Nested dict
@@ -745,7 +745,7 @@ founded_year = company['metadata']['founded']
 print(f"Engineer: {engineer_name}, Founded: {founded_year}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Engineer: Alice" in result
         assert "Founded: 2020" in result
@@ -754,7 +754,7 @@ print(f"Engineer: {engineer_name}, Founded: {founded_year}")
     @pytest.mark.asyncio
     async def test_with_statement_not_blocked(self, mock_tools):
         """Test that with statement works for allowed objects."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 # With statement should work for objects that support it
@@ -771,7 +771,7 @@ with MyContext() as ctx:
 print(result)
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Context: context value" in result
         assert "Error" not in result
@@ -779,7 +779,7 @@ print(result)
     @pytest.mark.asyncio
     async def test_block_import_from_string(self, mock_tools):
         """Test that dynamic imports are blocked."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         # __import__ is restricted, so this should fail
         code = """
@@ -787,7 +787,7 @@ module_name = "os"
 imported = __import__(module_name)
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -795,7 +795,7 @@ imported = __import__(module_name)
     @pytest.mark.asyncio
     async def test_typing_module(self, mock_tools):
         """Test that typing module is allowed for type hints."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         code = """
 from typing import List, Dict, Optional
@@ -807,7 +807,7 @@ result = process_items(['hello', 'world'])
 print(f"Result: {result}")
 """
 
-        result, new_vars = await eval_with_tools_async(code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(code, _locals=mock_tools)
 
         assert "hello" in result
         assert "world" in result
@@ -827,14 +827,14 @@ class TestSecurityAttacks:
     @pytest.mark.asyncio
     async def test_builtins_access_via_class(self, mock_tools):
         """Test accessing __builtins__ through class hierarchy."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to access builtins through object.__class__
 x = ().__class__.__bases__[0].__subclasses__()
 result = x
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should either work safely (no dangerous items) or fail
         # The key is that even if it works, it shouldn't give access to dangerous functions
@@ -845,7 +845,7 @@ result = x
     @pytest.mark.asyncio
     async def test_globals_access_attack(self, mock_tools):
         """Test trying to access globals() to get __builtins__."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to access globals to get builtins
@@ -855,7 +855,7 @@ if hasattr(b, '__import__'):
     import os
     result = os.environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should be blocked
         assert "Error" in result or "environ" not in str(result)
@@ -863,7 +863,7 @@ if hasattr(b, '__import__'):
     @pytest.mark.asyncio
     async def test_import_via_string_eval(self, mock_tools):
         """Test dynamic import using string manipulation."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to construct import statement dynamically
@@ -872,7 +872,7 @@ os_str = "o" + "s"
 # Try to use it (should fail - eval not available)
 result = eval(f"{import_str}('{os_str}')")
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "NameError" in result or "not defined" in result.lower()
@@ -880,7 +880,7 @@ result = eval(f"{import_str}('{os_str}')")
     @pytest.mark.asyncio
     async def test_bytecode_manipulation(self, mock_tools):
         """Test trying to manipulate bytecode."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to access code object and manipulate it
@@ -891,7 +891,7 @@ def dummy():
 bytecode = dummy.__code__.co_code
 result = bytecode
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should work (bytecode access is fine) but shouldn't allow code injection
         # The real test is that you can't do anything dangerous with it
@@ -900,7 +900,7 @@ result = bytecode
     @pytest.mark.asyncio
     async def test_frame_stack_manipulation(self, mock_tools):
         """Test trying to access stack frames to escape sandbox."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 import sys
@@ -908,7 +908,7 @@ import sys
 frame = sys._getframe()
 result = frame.f_back.f_globals
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "not allowed" in result.lower()
@@ -916,14 +916,14 @@ result = frame.f_back.f_globals
     @pytest.mark.asyncio
     async def test_unicode_smuggling(self, mock_tools):
         """Test using unicode to smuggle dangerous code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Use unicode to try to bypass filters
 \u0069\u006d\u0070\u006f\u0072\u0074 os
 result = os.environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "NameError" in result
@@ -931,7 +931,7 @@ result = os.environ
     @pytest.mark.asyncio
     async def test_attribute_access_chain(self, mock_tools):
         """Test long attribute access chains to find builtins."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to access builtins through various attribute chains
@@ -940,7 +940,7 @@ result.append(str.__class__)
 result.append(str.__class__.__mro__)
 result.append(object.__subclasses__())
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should work but shouldn't expose dangerous functions
         # The result should not contain file operations or imports
@@ -948,7 +948,7 @@ result.append(object.__subclasses__())
     @pytest.mark.asyncio
     async def test_decorator_injection(self, mock_tools):
         """Test using decorators to inject malicious code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use decorator to execute code
@@ -962,7 +962,7 @@ def dummy():
 
 result = "executed"
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -970,7 +970,7 @@ result = "executed"
     @pytest.mark.asyncio
     async def test_closure_escape(self, mock_tools):
         """Test trying to escape via closure variables."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to access closure to get outer scope
@@ -982,7 +982,7 @@ def outer():
 
 result = outer()()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -990,7 +990,7 @@ result = outer()()
     @pytest.mark.asyncio
     async def test_exception_exploitation(self, mock_tools):
         """Test using exception objects to access forbidden context."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use exception traceback to access outer scope
@@ -1000,7 +1000,7 @@ except ImportError as e:
     # Try to access the exception context
     result = e.__traceback__.tb_frame.f_globals
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should either fail or not expose dangerous items
         if "Error" not in result:
@@ -1009,7 +1009,7 @@ except ImportError as e:
     @pytest.mark.asyncio
     async def test_class_new_override(self, mock_tools):
         """Test overriding __new__ to execute code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to override __new__ for code execution
@@ -1020,7 +1020,7 @@ class Malicious:
 
 result = Malicious()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1028,7 +1028,7 @@ result = Malicious()
     @pytest.mark.asyncio
     async def test_metaclass_injection(self, mock_tools):
         """Test using metaclass to inject code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use metaclass for code injection
@@ -1042,7 +1042,7 @@ class Attack(metaclass=MetaAttack):
 
 result = Attack()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1050,7 +1050,7 @@ result = Attack()
     @pytest.mark.asyncio
     async def test_descriptor_protocol_exploit(self, mock_tools):
         """Test using descriptor protocol to access forbidden attributes."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use descriptor to access forbidden items
@@ -1064,7 +1064,7 @@ class Container:
 
 result = Container().attr
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1072,7 +1072,7 @@ result = Container().attr
     @pytest.mark.asyncio
     async def test_property_decorator_attack(self, mock_tools):
         """Test using @property to execute dangerous code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use property to execute code
@@ -1084,7 +1084,7 @@ class Attack:
 
 result = Attack().malicious
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1092,7 +1092,7 @@ result = Attack().malicious
     @pytest.mark.asyncio
     async def test_context_manager_exploit(self, mock_tools):
         """Test using context manager to execute code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use context manager for code execution
@@ -1107,7 +1107,7 @@ class ContextAttack:
 with ContextAttack() as result:
     pass
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1115,7 +1115,7 @@ with ContextAttack() as result:
     @pytest.mark.asyncio
     async def test_generator_attack(self, mock_tools):
         """Test using generators to defer dangerous execution."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use generator to defer import
@@ -1125,7 +1125,7 @@ def gen():
 
 result = list(gen())
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1133,7 +1133,7 @@ result = list(gen())
     @pytest.mark.asyncio
     async def test_async_attack(self, mock_tools):
         """Test using async/await to bypass restrictions."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use async to import dangerous modules
@@ -1143,7 +1143,7 @@ async def attack():
 
 result = await attack()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1151,62 +1151,62 @@ result = await attack()
     @pytest.mark.asyncio
     async def test_list_comprehension_attack(self, mock_tools):
         """Test hiding import in list comprehension."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to hide import in comprehension
 result = [__import__('os').environ for _ in range(1)]
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_lambda_attack(self, mock_tools):
         """Test using lambda to execute dangerous code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use lambda for import
 attack = lambda: __import__('os').environ
 result = attack()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_walrus_operator_attack(self, mock_tools):
         """Test using walrus operator to smuggle imports."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use walrus operator
 if (dangerous := __import__('os')):
     result = dangerous.environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_format_string_attack(self, mock_tools):
         """Test using format strings to execute code."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use f-string with expressions
 module = 'os'
 result = f"{__import__(module).environ}"
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_getattr_attack(self, mock_tools):
         """Test using getattr to access forbidden attributes."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to use getattr to bypass restrictions
@@ -1215,7 +1215,7 @@ import_func = builtins.get('__import__')
 os = import_func('os')
 result = os.environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should be blocked by restricted import
         assert "Error" in result or "environ" not in str(result)
@@ -1223,7 +1223,7 @@ result = os.environ
     @pytest.mark.asyncio
     async def test_setattr_namespace_pollution(self, mock_tools):
         """Test using setattr to pollute namespace."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to pollute namespace
@@ -1231,14 +1231,14 @@ import json
 setattr(json, 'os', __import__('os'))
 result = json.os.environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_del_statement_attack(self, mock_tools):
         """Test using del to manipulate restrictions."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to delete restrictions
@@ -1250,7 +1250,7 @@ except:
 import os
 result = os.environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result or "NameError" in result
@@ -1258,7 +1258,7 @@ result = os.environ
     @pytest.mark.asyncio
     async def test_nested_function_scope_leak(self, mock_tools):
         """Test nested functions to leak scope."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to leak scope through nested functions
@@ -1272,7 +1272,7 @@ def level1():
 
 result = level1()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "ImportError" in result
@@ -1280,7 +1280,7 @@ result = level1()
     @pytest.mark.asyncio
     async def test_exec_string_construction(self, mock_tools):
         """Test constructing exec/eval from strings."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try to reconstruct exec function name
@@ -1289,7 +1289,7 @@ code = "import os; result = os.environ"
 # Try to execute (should fail)
 globals()[func_name](code)
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
         assert "KeyError" in result or "NameError" in result
@@ -1297,7 +1297,7 @@ globals()[func_name](code)
     @pytest.mark.asyncio
     async def test_type_confusion_attack(self, mock_tools):
         """Test type confusion to bypass checks."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try type confusion
@@ -1310,14 +1310,14 @@ class FakeDict(dict):
 fake = FakeDict()
 result = fake['os'].environ
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_infinite_recursion_dos(self, mock_tools):
         """Test DoS via infinite recursion (should timeout)."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Try infinite recursion
@@ -1326,7 +1326,7 @@ def recurse():
 
 result = recurse()
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should timeout or hit recursion limit
         assert "Error" in result
@@ -1335,7 +1335,7 @@ result = recurse()
     @pytest.mark.asyncio
     async def test_transitive_import_exploit(self, mock_tools):
         """Test accessing dangerous modules via attributes of allowed modules."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         # typing module usually imports sys, asyncio imports sys/os
         # This tests if we can piggyback on allowed modules to reach forbidden ones
@@ -1369,7 +1369,7 @@ if found_os:
 else:
     result = "safe"
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # Should be blocked or fail to find path
         assert "Error" in result or "environ" not in str(result)
@@ -1377,7 +1377,7 @@ else:
     @pytest.mark.asyncio
     async def test_gadget_chain_globals(self, mock_tools):
         """Test finding a function with dangerous globals via subclass crawling."""
-        from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_agent_base import eval_with_tools_async
+        from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
         attack_code = """
 # Iterate over subclasses to find a 'gadget' - a class/function that has 'os' in its global scope
@@ -1400,7 +1400,7 @@ for cls in classes:
              except:
                  pass
 """
-        result, new_vars = await eval_with_tools_async(attack_code, _locals=mock_tools)
+        result, new_vars = await CodeExecutor.eval_with_tools_async(attack_code, _locals=mock_tools)
 
         # This sophisticated attack should also fail in a robust sandbox
         assert "Error" in result or "environ" not in str(result)

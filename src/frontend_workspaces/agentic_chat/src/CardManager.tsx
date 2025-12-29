@@ -77,6 +77,7 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
     variables: Record<string, any>;
   }>>([]);
   const [selectedAnswerId, setSelectedAnswerId] = useState<string | null>(null);
+  const [expandedCodePreviews, setExpandedCodePreviews] = useState<{ [key: string]: boolean }>({});
   // Loader for next step within this card is derived from processing state
   const cardRef = useRef<HTMLDivElement>(null);
   const stepRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
@@ -186,6 +187,7 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
           setIsProcessingComplete(true);
           setIsReasoningCollapsed(true);
           setShowDetails({});
+          setExpandedCodePreviews({});
         },
         isProcessingStopped: () => isProcessingComplete,
         setProcessingComplete: (isComplete: boolean) => {
@@ -200,6 +202,7 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
           setCurrentStepIndex(0);
           setIsStopped(false);
           setShowDetails({});
+          setExpandedCodePreviews({});
           stepRefs.current = {};
           // Note: variablesHistory is preserved across conversations
         },
@@ -390,8 +393,43 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
     window.dispatchEvent(event);
   }, [globalVariables, variablesHistory]);
 
+  // Toggle code preview expansion
+  const toggleCodePreview = useCallback((stepId: string) => {
+    setExpandedCodePreviews(prev => ({ ...prev, [stepId]: !prev[stepId] }));
+  }, []);
+
+  // Helper function to check if a step should be rendered
+  const shouldRenderStep = useCallback((step: Step) => {
+    if (step.title === "simple_text") {
+      return true;
+    }
+    
+    // Parse content for description
+    let parsedContent;
+    try {
+      if (typeof step.content === "string") {
+        try {
+          parsedContent = JSON.parse(step.content);
+          const keys = Object.keys(parsedContent);
+          if (keys.length === 1 && keys[0] === "data") {
+            parsedContent = parsedContent.data;
+          }
+        } catch (e) {
+          parsedContent = step.content;
+        }
+      } else {
+        parsedContent = step.content;
+      }
+    } catch (error) {
+      parsedContent = step.content;
+    }
+    
+    const description = getCaseDescription(step.id, step.title, parsedContent);
+    return description !== null;
+  }, []);
+
   // Function to generate natural language descriptions for each case
-  const getCaseDescription = (stepTitle: string, parsedContent: any) => {
+  const getCaseDescription = (stepId: string, stepTitle: string, parsedContent: any) => {
     switch (stepTitle) {
       case "PlanControllerAgent":
         if (parsedContent.subtasks_progress && parsedContent.next_subtask) {
@@ -434,12 +472,215 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
         return "I'm reflecting on the code and planning the next steps in the workflow.";
       
       case "CodeAgent":
-        if (parsedContent.code) {
-          const codeLines = parsedContent.code.split('\n').length;
-          const outputPreview = parsedContent.execution_output ? parsedContent.execution_output.substring(0, 50) + (parsedContent.execution_output.length > 50 ? '...' : '') : '';
-          return `I've generated and executed <span style="color:${HIGHLIGHT_COLOR}; font-weight: 600;">${codeLines} lines of code</span> to accomplish your request. Here's a preview of the output: <span style="color:#10b981; font-family:monospace; background:#f0fdf4; padding:2px 4px; border-radius:3px; font-weight:500;">${outputPreview}</span>`;
+        // Check if we have meaningful content
+        const hasCode = parsedContent.code && parsedContent.code.trim().length > 0;
+        const hasOutput = parsedContent.execution_output && parsedContent.execution_output.trim().length > 0;
+        
+        if (hasCode || hasOutput) {
+          // Handle case where we have code
+          const codeLines = hasCode ? parsedContent.code.split('\n').length : 0;
+          const allCodeLines = hasCode ? parsedContent.code.split('\n') : [];
+          const isExpanded = expandedCodePreviews[stepId];
+          const maxPreviewLines = 4;
+          const codePreviewLines = isExpanded ? allCodeLines : allCodeLines.slice(0, maxPreviewLines);
+          const hasMoreLines = codeLines > maxPreviewLines;
+          
+          return (
+            <div>
+              {hasCode && (
+                <>
+                  {parsedContent.execution_output ? (
+                    <span>
+                      I've generated and executed <span style={{ color: HIGHLIGHT_COLOR, fontWeight: 600 }}>{codeLines} lines of code</span>. Code preview:
+                    </span>
+                  ) : (
+                    <span>
+                      I've generated <span style={{ color: HIGHLIGHT_COLOR, fontWeight: 600 }}>{codeLines} lines of code</span> to accomplish your request. Preview:
+                    </span>
+                  )}
+                  <div style={{ 
+                color: '#6366f1', 
+                fontFamily: 'monospace', 
+                background: '#eef2ff', 
+                padding: '8px 10px', 
+                borderRadius: '4px', 
+                fontSize: '11px', 
+                lineHeight: '1.4', 
+                marginTop: '6px', 
+                borderLeft: '3px solid #6366f1',
+                position: 'relative',
+                overflowX: 'auto',
+                maxWidth: '100%'
+              }}>
+                {codePreviewLines.map((line: string, idx: number) => {
+                  return <div key={idx} style={{ whiteSpace: 'pre' }}>{line || '\u00A0'}</div>;
+                })}
+                {!isExpanded && hasMoreLines && (
+                  <div style={{ color: '#94a3b8' }}>...</div>
+                )}
+                {hasMoreLines && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleCodePreview(stepId);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: '8px',
+                      bottom: '8px',
+                      background: '#6366f1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      padding: '2px 8px',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      fontFamily: 'sans-serif'
+                    }}
+                    onMouseOver={(e) => (e.currentTarget.style.background = '#4f46e5')}
+                    onMouseOut={(e) => (e.currentTarget.style.background = '#6366f1')}
+                  >
+                    {isExpanded ? '▲ Less' : '▼ More'}
+                  </button>
+                )}
+              </div>
+                </>
+              )}
+              
+              {!hasCode && parsedContent.execution_output && (
+                <span>
+                  Code execution completed. Output:
+                </span>
+              )}
+              
+              {parsedContent.execution_output && (() => {
+                const output = parsedContent.execution_output.trim();
+                const outputLines = output.split('\n');
+                const isOutputExpanded = expandedCodePreviews[`${stepId}_output`];
+                const maxPreviewLines = 3;
+                const previewLines = isOutputExpanded ? outputLines : outputLines.slice(0, maxPreviewLines);
+                const hasMoreOutput = outputLines.length > maxPreviewLines || output.length > 300;
+                
+                return (
+                  <div style={{ marginTop: '8px' }}>
+                    <div style={{ fontSize: '12px', color: '#059669', fontWeight: 500, marginBottom: '4px' }}>
+                      Execution Output:
+                    </div>
+                    <div style={{ 
+                      color: '#065f46', 
+                      fontFamily: 'monospace', 
+                      background: '#f0fdf4', 
+                      padding: '8px 10px', 
+                      borderRadius: '4px', 
+                      fontSize: '11px', 
+                      lineHeight: '1.4',
+                      borderLeft: '3px solid #10b981',
+                      position: 'relative',
+                      maxHeight: isOutputExpanded ? 'none' : '150px',
+                      overflow: isOutputExpanded ? 'auto' : 'hidden',
+                      overflowX: 'auto',
+                      maxWidth: '100%'
+                    }}>
+                      {previewLines.map((line: string, idx: number) => {
+                        return <div key={idx} style={{ whiteSpace: 'pre' }}>{line || '\u00A0'}</div>;
+                      })}
+                      {!isOutputExpanded && hasMoreOutput && (
+                        <div style={{ color: '#94a3b8' }}>...</div>
+                      )}
+                      {hasMoreOutput && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCodePreview(`${stepId}_output`);
+                          }}
+                          style={{
+                            position: 'absolute',
+                            right: '8px',
+                            bottom: '8px',
+                            background: '#10b981',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            padding: '2px 8px',
+                            fontSize: '10px',
+                            cursor: 'pointer',
+                            fontFamily: 'sans-serif'
+                          }}
+                          onMouseOver={(e) => (e.currentTarget.style.background = '#059669')}
+                          onMouseOut={(e) => (e.currentTarget.style.background = '#10b981')}
+                        >
+                          {isOutputExpanded ? '▲ Less' : '▼ More'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
         }
-        return "I'm working on generating code for your request.";
+        // Return null to skip rendering empty CodeAgent events
+        return null;
+      
+      case "CodeAgent_Reasoning":
+        // Text response from LLM (no code)
+        if (typeof parsedContent === 'string' && parsedContent) {
+          const isExpanded = expandedCodePreviews[stepId];
+          const maxPreviewLength = 200;
+          const hasMoreContent = parsedContent.length > maxPreviewLength;
+          const displayContent = isExpanded ? parsedContent : parsedContent.substring(0, maxPreviewLength);
+          
+          return (
+            <div>
+              <span>I'm reasoning about your request:</span>
+              <div style={{ 
+                color: '#475569', 
+                fontStyle: 'italic',
+                background: '#f8fafc', 
+                padding: '8px 10px', 
+                borderRadius: '4px', 
+                fontSize: '12px', 
+                lineHeight: '1.5', 
+                marginTop: '6px', 
+                borderLeft: '3px solid #94a3b8',
+                position: 'relative',
+                whiteSpace: 'pre-wrap',
+                overflowX: 'auto',
+                maxWidth: '100%'
+              }}>
+                {displayContent}
+                {!isExpanded && hasMoreContent && <span style={{ color: '#94a3b8' }}>...</span>}
+                {hasMoreContent && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleCodePreview(stepId);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: '8px',
+                      bottom: '8px',
+                      background: '#64748b',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      padding: '2px 8px',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      fontFamily: 'sans-serif'
+                    }}
+                    onMouseOver={(e) => (e.currentTarget.style.background = '#475569')}
+                    onMouseOut={(e) => (e.currentTarget.style.background = '#64748b')}
+                  >
+                    {isExpanded ? '▲ Less' : '▼ More'}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        }
+        // Return null to skip rendering empty CodeAgent_Reasoning events
+        return null;
       
       case "ShortlisterAgent":
         if (parsedContent.result) {
@@ -573,8 +814,29 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
           }
           break;
         case "CodeAgent":
-          if (parsedContent.code) {
+          if (parsedContent.code || parsedContent.execution_output) {
             mainElement = <CoderAgentOutput coderData={parsedContent} />;
+          }
+          break;
+        case "CodeAgent_Reasoning":
+          // Display reasoning text in a clean format
+          if (typeof parsedContent === 'string' || parsedContent) {
+            const textContent = typeof parsedContent === 'string' ? parsedContent : JSON.stringify(parsedContent, null, 2);
+            mainElement = (
+              <div
+                style={{
+                  fontSize: "14px",
+                  lineHeight: "1.6",
+                  color: "#475569",
+                  padding: "12px",
+                  backgroundColor: "#f8fafc",
+                  borderRadius: "6px",
+                  border: "1px solid #e2e8f0",
+                  fontStyle: "italic"
+                }}
+                dangerouslySetInnerHTML={{ __html: marked(textContent) }}
+              />
+            );
           }
           break;
         case "ShortlisterAgent":
@@ -681,7 +943,13 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
     setIsReasoningCollapsed(prev => !prev);
   }, []);
 
-  const mapStepTitle = (stepTitle: string) => {
+  const mapStepTitle = (stepTitle: string, parsedContent?: any) => {
+    // Handle CodeAgent dynamically based on execution output
+    if (stepTitle === "CodeAgent" && parsedContent) {
+      const hasExecutionOutput = parsedContent.execution_output && parsedContent.execution_output.trim().length > 0;
+      return hasExecutionOutput ? "Executed Code" : "Generated Code";
+    }
+    
     const titleMap = {
       TaskDecompositionAgent: "Decomposed task into steps",
       TaskAnalyzerAgent: "Analyzed available applications",
@@ -694,7 +962,7 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
       ),
       APIPlannerAgent: "Planned API actions",
       APICodePlannerAgent: "Planned steps for coding agent",
-      CodeAgent: "Generated code solution",
+      CodeAgent_Reasoning: "Reasoning about approach",
       ShortlisterAgent: "Shortlisted relevant APIs",
       QaAgent: "Answered question",
       FinalAnswerAgent: "Completed final answer",
@@ -710,21 +978,27 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
   const hasErrorStep = currentSteps.some(step => step.title === "Error");
 
   // Separate final answer steps and active user action steps from reasoning steps
-  const finalAnswerSteps = currentSteps.filter(step =>
-    step.title === "FinalAnswerAgent" || step.title === "FinalAnswer"
-  );
+  const finalAnswerSteps = currentSteps.filter(step => {
+    const isFinalAnswer = step.title === "FinalAnswerAgent" || step.title === "FinalAnswer";
+    return isFinalAnswer && shouldRenderStep(step);
+  });
 
   // Show SuggestHumanActions as active if it's not marked as completed
-  const userActionSteps = currentSteps.filter(step =>
-    step.title === "SuggestHumanActions" && !step.completed
-  );
+  const userActionSteps = currentSteps.filter(step => {
+    const isUserAction = step.title === "SuggestHumanActions" && !step.completed;
+    return isUserAction && shouldRenderStep(step);
+  });
 
-  // Include completed SuggestHumanActions in reasoning steps
-  const reasoningSteps = currentSteps.filter(step =>
-    step.title !== "FinalAnswerAgent" &&
-    step.title !== "FinalAnswer" &&
-    !(step.title === "SuggestHumanActions" && !step.completed)
-  );
+  // Include completed SuggestHumanActions in reasoning steps, excluding empty ones
+  const reasoningSteps = currentSteps.filter(step => {
+    const isNotFinalOrUserAction = 
+      step.title !== "FinalAnswerAgent" &&
+      step.title !== "FinalAnswer" &&
+      !(step.title === "SuggestHumanActions" && !step.completed);
+    
+    // Also exclude steps that shouldn't be rendered (empty CodeAgent events, etc.)
+    return isNotFinalOrUserAction && shouldRenderStep(step);
+  });
 
   // Get current step to display (before final answer or user action)
   const currentStep = currentSteps[currentStepIndex];
@@ -756,6 +1030,14 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
 
     if (step.title === "simple_text") {
       return <div key={step.id} style={{ marginBottom: "10px" }}>{step.content}</div>;
+    }
+
+    // Get description for rendering
+    const description = getCaseDescription(step.id, step.title, parsedContent);
+    
+    // Skip rendering if description is null (e.g., empty CodeAgent events)
+    if (description === null) {
+      return null;
     }
 
     // Only render component content if details are shown
@@ -799,7 +1081,7 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
               gap: "6px",
             }}
           >
-            {mapStepTitle(step.title)}
+            {mapStepTitle(step.title, parsedContent)}
           </h3>
         </div>
 
@@ -809,15 +1091,17 @@ const CardManager: React.FC<CardManagerProps> = ({ chatInstance }) => {
             marginBottom: "12px",
           }}
         >
-          <p
+          <div
             style={{
               margin: "0",
               fontSize: "13px",
               color: "#64748b",
               lineHeight: "1.4",
             }}
-            dangerouslySetInnerHTML={{ __html: getCaseDescription(step.title, parsedContent) }}
-          />
+          >
+            {/* Reuse the description computed earlier */}
+            {React.isValidElement(description) ? description : <span dangerouslySetInnerHTML={{ __html: description as string }} />}
+          </div>
         </div>
 
         {/* Component Content - Only show if showDetails is true */}

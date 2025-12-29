@@ -61,6 +61,13 @@ else
 fi
 
 git add -A
+# Remove binary files that HuggingFace doesn't allow
+echo "🚫 Excluding binary files from push..."
+BINARY_FILE="docs/examples/langflow/CUGA-Langflow-Demo.png"
+if git ls-files --cached "$BINARY_FILE" | grep -q .; then
+  git rm --cached "$BINARY_FILE" 2>/dev/null || true
+  echo "✅ Removed binary file from staging"
+fi
 git commit --no-verify -m "feat: docker-v1 with optimized frontend
 
 - Optimized webpack bundle from 16MB to 6.67MB
@@ -69,7 +76,9 @@ git commit --no-verify -m "feat: docker-v1 with optimized frontend
 - All files under 10MB limit" || {
   echo "❌ Failed to commit changes"
   echo "🔄 Returning to original branch: $ORIGINAL_BRANCH"
-  git checkout $ORIGINAL_BRANCH
+  # Remove the binary file from working tree if it exists as untracked
+  rm -f "$BINARY_FILE" 2>/dev/null || true
+  git checkout -f $ORIGINAL_BRANCH
   git branch -D $TEMP_BRANCH
   exit 1
 }
@@ -82,13 +91,17 @@ if [ $? -eq 0 ]; then
   echo ""
   echo "✅ Successfully pushed to Hugging Face!"
   echo "🔄 Returning to original branch: $ORIGINAL_BRANCH"
-  git checkout $ORIGINAL_BRANCH
+  # Remove the binary file from working tree if it exists as untracked
+  rm -f "$BINARY_FILE" 2>/dev/null || true
+  git checkout -f $ORIGINAL_BRANCH
   git branch -D $TEMP_BRANCH
 else
   echo ""
   echo "❌ Push failed"
   echo "🔄 Returning to original branch: $ORIGINAL_BRANCH"
-  git checkout $ORIGINAL_BRANCH
+  # Remove the binary file from working tree if it exists as untracked
+  rm -f "$BINARY_FILE" 2>/dev/null || true
+  git checkout -f $ORIGINAL_BRANCH
   git branch -D $TEMP_BRANCH
   exit 1
 fi
