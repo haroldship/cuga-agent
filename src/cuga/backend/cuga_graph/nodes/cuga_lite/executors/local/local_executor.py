@@ -7,6 +7,7 @@ from typing import Any
 from ..base_executor import BaseExecutor
 from ..common.restricted_environment import RestrictedEnvironment
 from ..common.security import SecurityValidator
+from ..common.benchmark_mode import is_benchmark_mode
 
 
 class LocalExecutor(BaseExecutor):
@@ -18,6 +19,8 @@ class LocalExecutor(BaseExecutor):
         'pandas',
         'numpy',
         'datetime',
+        '_strptime',
+        'time',
         'math',
         'collections',
         'itertools',
@@ -47,17 +50,24 @@ class LocalExecutor(BaseExecutor):
             Exception: For any execution errors
         """
         with contextlib.redirect_stdout(io.StringIO()) as f:
+            benchmark_mode = is_benchmark_mode()
+
             restricted_import = RestrictedEnvironment.create_restricted_import(self.ALLOWED_MODULES)
 
             safe_builtins = RestrictedEnvironment.create_safe_builtins(restricted_import)
 
-            safe_locals = SecurityValidator.filter_safe_locals(context_locals)
+            # In benchmark mode, don't filter locals
+            if benchmark_mode:
+                safe_locals = context_locals
+            else:
+                safe_locals = SecurityValidator.filter_safe_locals(context_locals)
 
             restricted_globals = RestrictedEnvironment.create_restricted_globals(safe_builtins, safe_locals)
 
             SecurityValidator.assert_safe_globals(restricted_globals)
 
-            SecurityValidator.validate_context_usage(wrapped_code, context_locals)
+            if context_locals:
+                SecurityValidator.validate_context_usage(wrapped_code, context_locals)
 
             exec_locals = {}
             exec(wrapped_code, restricted_globals, exec_locals)

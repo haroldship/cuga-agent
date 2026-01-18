@@ -59,6 +59,9 @@ class PolicyContext(BaseModel):
         """
         Get text from the specified target field.
 
+        For "agent_response" target, automatically combines user_input and agent_response
+        to provide full context for OUTPUT_FORMATTER policies.
+
         Args:
             target: Target field name
 
@@ -72,6 +75,9 @@ class PolicyContext(BaseModel):
         elif target == "sub_task":
             return self.sub_task or ""
         elif target == "agent_response":
+            # For OUTPUT_FORMATTER policies, combine user input and agent response
+            if self.user_input and self.agent_response:
+                return f"User Input: {self.user_input}\n\nAgent Response: {self.agent_response}"
             return self.agent_response or ""
         else:
             return str(self.state_data.get(target, "")) if self.state_data else ""
@@ -449,10 +455,53 @@ class PolicyAgent:
                 },
             )
 
+    def _build_conflict_resolution_user_prompt(
+        self,
+        target: str,
+        target_text: str,
+        policies_text: List[str],
+        context: PolicyContext,
+        policy_types: Optional[List[PolicyType]] = None,
+    ) -> str:
+        """
+        Build the user prompt for conflict resolution based on target, context, and policy types.
+
+        Args:
+            target: Target field being evaluated (e.g., "intent", "agent_response")
+            target_text: The actual text from the target field
+            policies_text: List of formatted policy descriptions
+            context: Current policy context
+            policy_types: Optional list of policy types being evaluated
+
+        Returns:
+            Formatted user prompt string
+        """
+        policies_section = f"Available Policies:\n{chr(10).join(policies_text)}"
+
+        # Determine prompt format based on target and policy types
+        if target == "agent_response":
+            # For OUTPUT_FORMATTER policies, the target_text already contains both user input and agent response
+            # Format: "User Input: ...\n\nAgent Response: ..."
+            return f"""{target_text}
+
+{policies_section}
+
+Which policy (if any) best matches the context above?"""
+        else:
+            # For intent-based policies (INTENT_GUARD, PLAYBOOK, etc.)
+            return f"""User Input: "{target_text}"
+
+{policies_section}
+
+Which policy (if any) best matches the user's intent?"""
+
     async def _resolve_nl_trigger_conflicts(
         self,
         policies_with_nl_triggers: List[tuple[Policy, List[NaturalLanguageTrigger]]],
         context: PolicyContext,
+        target: str = "intent",
+        target_text: Optional[str] = None,
+        policy_types: Optional[List[PolicyType]] = None,
     ) -> Optional[tuple[Policy, float, str]]:
         """
         Use LLM to resolve conflicts when multiple policies have Natural Language triggers.
@@ -460,14 +509,22 @@ class PolicyAgent:
         Args:
             policies_with_nl_triggers: List of (policy, nl_triggers) tuples
             context: Current context
+            target: Target field being evaluated (e.g., "intent", "agent_response")
+            target_text: The actual text from the target field (includes combined user input + agent response for agent_response)
 
         Returns:
             Tuple of (best_policy, confidence, reasoning) or None if no match
         """
         logger.debug(f"🔧 Starting LLM conflict resolution for {len(policies_with_nl_triggers)} policies")
-        query_text = context.get_query_text()
 
-        logger.debug(f"  - Query text: '{query_text}'")
+        # Use target_text if provided, otherwise fall back to query_text
+        if target_text is None:
+            target_text = context.get_target_text(target) or context.get_query_text()
+
+        query_text = target_text  # Keep for backward compatibility in logging
+
+        logger.debug(f"  - Target: '{target}'")
+        logger.debug(f"  - Target text: '{query_text[:200] if query_text else None}...'")
         logger.debug(f"  - LLM available: {self.llm is not None}")
         logger.debug("  - Policies to resolve:")
         for i, (policy, nl_triggers) in enumerate(policies_with_nl_triggers, 1):
@@ -527,12 +584,14 @@ Respond with JSON:
   "reasoning": "brief explanation of why this policy was chosen or why no match"
 }"""
 
-            user_prompt = f"""User Input: "{query_text}"
-
-Available Policies:
-{chr(10).join(policies_text)}
-
-Which policy (if any) best matches the user's intent?"""
+            # Build user prompt using helper function
+            user_prompt = self._build_conflict_resolution_user_prompt(
+                target=target,
+                target_text=query_text,
+                policies_text=policies_text,
+                context=context,
+                policy_types=policy_types,
+            )
 
             messages = [
                 SystemMessage(content=system_prompt),
@@ -797,7 +856,13 @@ Which policy (if any) best matches the user's intent?"""
             logger.warning("No LLM available for NL policy evaluation")
             return None
 
-        resolution = await self._resolve_nl_trigger_conflicts(policies_with_nl_triggers, context)
+        resolution = await self._resolve_nl_trigger_conflicts(
+            policies_with_nl_triggers,
+            context,
+            target=target,
+            target_text=query_text,
+            policy_types=policy_types,
+        )
         if not resolution:
             logger.debug("LLM conflict resolution returned no match")
             return None

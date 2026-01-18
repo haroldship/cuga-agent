@@ -271,7 +271,9 @@ class CugaLiteNode(BaseNode):
 
         # Use sub_task as the input if available (preferred over state.input)
         task_input = state.sub_task if state.sub_task else state.input
-        is_autonomous_subtask = bool(state.sub_task)
+        is_autonomous_subtask = settings.advanced_features.force_autonomous_mode or (
+            state.sub_task is not None and state.sub_task.strip() != ""
+        )
         logger.info(f"Using task_input: {task_input}")
         logger.info(f"is_autonomous_subtask: {is_autonomous_subtask}")
 
@@ -472,7 +474,9 @@ class CugaLiteNode(BaseNode):
         """
         logger.info("Processing CugaLite execution results")
         logger.info(f"Answer: {answer[:200] if answer else 'None'}...")
-        is_autonomous_subtask = state.sub_task is not None and state.sub_task.strip() != ""
+        is_autonomous_subtask = settings.advanced_features.force_autonomous_mode or (
+            state.sub_task is not None and state.sub_task.strip() != ""
+        )
         # Check for errors
         has_error = self._has_error(answer)
         if has_error:

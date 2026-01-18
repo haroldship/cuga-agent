@@ -12,6 +12,7 @@ from cuga.backend.tools_env.registry.config.config_loader import ServiceConfig
 from cuga.backend.tools_env.registry.mcp_manager.openapi_parser import (
     SimpleOpenAPIParser,
 )
+from cuga.config import settings
 
 TYPE_MAP = {
     "string": str,
@@ -31,18 +32,32 @@ def sanitize_tool_name(name: str) -> str:
     return s.strip('_') or "unnamed_tool"
 
 
-def _extract_first_segment(path_str: str) -> Optional[str]:
-    """Extract the first segment from a path string."""
+def _extract_path_segment(path_str: str, segment_index: int = 1) -> Optional[str]:
+    """Extract a specific segment from a path string.
+
+    Args:
+        path_str: The path string to extract from (e.g., "/api/v1/users/123")
+        segment_index: Which segment to extract (1 = first, 2 = second, 3 = third)
+
+    Returns:
+        The requested segment if it exists, None otherwise.
+
+    Examples:
+        _extract_path_segment("/api/v1/users", 1) -> "api"
+        _extract_path_segment("/api/v1/users", 2) -> "v1"
+        _extract_path_segment("/api/v1/users", 3) -> "users"
+    """
     path_stripped = (path_str or "").strip()
     if path_stripped and path_stripped.strip('/'):
-        first_segment = path_stripped.strip('/').split('/')[0]
-        return first_segment if first_segment else None
+        segments = [seg for seg in path_stripped.strip('/').split('/') if seg]
+        if 1 <= segment_index <= len(segments):
+            return segments[segment_index - 1]
     return None
 
 
 def determine_operation_name_strategy(operations: List[Any]) -> Callable[[str, str], str]:
     """
-    Determine the naming strategy for operations by checking if first path segments are unique.
+    Determine the naming strategy for operations by checking if path segments are unique.
 
     Args:
         operations: List of operations. Each operation should have:
@@ -52,7 +67,12 @@ def determine_operation_name_strategy(operations: List[Any]) -> Callable[[str, s
     Returns:
         A function that takes (path: str, operation_id: str) and returns the name to use.
     """
-    first_segments = []
+    # Get configured segment index from settings (defaults to 1)
+    segment_index = getattr(settings.advanced_features, 'path_segment_index', 1)
+    # Ensure segment_index is between 1 and 3
+    segment_index = max(1, min(3, segment_index))
+
+    path_segments = []
     operation_ids = []
 
     for op in operations:
@@ -67,20 +87,20 @@ def determine_operation_name_strategy(operations: List[Any]) -> Callable[[str, s
         else:
             continue
 
-        first_seg = _extract_first_segment(path)
-        if first_seg:
-            first_segments.append(first_seg)
+        path_seg = _extract_path_segment(path, segment_index=segment_index)
+        if path_seg:
+            path_segments.append(path_seg)
         if operation_id:
             operation_ids.append(operation_id)
 
-    use_first_segment = len(first_segments) == len(set(first_segments)) and len(first_segments) > 0
+    use_path_segment = len(path_segments) == len(set(path_segments)) and len(path_segments) > 0
 
     def get_operation_name(path: str, operation_id: str) -> str:
         """Get the operation name based on the determined strategy."""
-        if use_first_segment:
-            first_seg = _extract_first_segment(path)
-            if first_seg:
-                return first_seg
+        if use_path_segment:
+            path_seg = _extract_path_segment(path, segment_index=segment_index)
+            if path_seg:
+                return path_seg
         return operation_id or "unnamed"
 
     return get_operation_name
@@ -392,7 +412,21 @@ def extract_field_definitions(api) -> Dict[str, tuple[type, Any]]:
 
             out: Dict[str, tuple[type, Any]] = {}
             _walk_schema_fields(to_raw(schema), _no_ref, prefix="", required=schema.required or [], out=out)
-            field_defs.update(out)
+            # Check for name collisions between parameters and request body fields
+            # Parameters (query/path) take precedence over request body fields to avoid conflicts
+            # Request body fields that don't collide are still added
+            for key, value in out.items():
+                if key not in field_defs:
+                    field_defs[key] = value
+                else:
+                    # Name collision: parameter takes precedence
+                    # Log warning to help debug parameter structure issues
+                    logger.warning(
+                        f"Name collision in API '{api.operation_id}': field '{key}' exists as both "
+                        f"parameter and request body field. Parameter definition (likely query/path) "
+                        f"will be used. If '{key}' should be a nested object from request body, "
+                        f"consider renaming the parameter or restructuring the API."
+                    )
 
     return field_defs
 

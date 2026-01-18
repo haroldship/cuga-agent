@@ -79,6 +79,7 @@ from cuga.backend.cuga_graph.policy.enactment import PolicyEnactment
 from cuga.config import settings
 from cuga.configurations.instructions_manager import get_all_instructions_formatted
 from cuga.backend.llm.utils.helpers import load_one_prompt
+from cuga.backend.cuga_graph.nodes.cuga_lite.reflection.reflection import reflection_task
 from pathlib import Path
 
 try:
@@ -436,6 +437,7 @@ def create_cuga_lite_graph(
     agent_state: Optional[AgentState] = None,
     thread_id: Optional[str] = None,
     callbacks: Optional[List[BaseCallbackHandler]] = None,
+    special_instructions: Optional[str] = None,
 ) -> StateGraph:
     """
     Create a unified CugaLite subgraph combining CodeAct and CugaAgent functionality.
@@ -448,6 +450,7 @@ def create_cuga_lite_graph(
         agent_state: Optional AgentState for variables management
         thread_id: Thread ID for E2B sandbox caching
         callbacks: Optional list of callback handlers
+        special_instructions: Optional special instructions to add to the prompt
 
     Returns:
         StateGraph implementing the CugaLite architecture
@@ -463,7 +466,13 @@ def create_cuga_lite_graph(
     instructions = get_all_instructions_formatted()
 
     # Factory function to create prepare_tools_and_apps node with access to tools/config
-    def create_prepare_node(base_tool_provider, base_prompt_template, base_instructions, tools_context_dict):
+    def create_prepare_node(
+        base_tool_provider,
+        base_prompt_template,
+        base_instructions,
+        tools_context_dict,
+        base_special_instructions,
+    ):
         """Factory to create prepare node with closure over tool provider and config."""
 
         async def prepare_tools_and_apps(
@@ -634,9 +643,11 @@ def create_cuga_lite_graph(
                     instructions=base_instructions,
                     apps=apps_for_prompt,
                     task_loaded_from_file=task_loaded_from_file,
-                    is_autonomous_subtask=is_autonomous_subtask,
+                    is_autonomous_subtask=settings.advanced_features.force_autonomous_mode
+                    or is_autonomous_subtask,
                     prompt_template=base_prompt_template,
                     enable_find_tools=enable_find_tools,
+                    special_instructions=base_special_instructions,
                 )
 
             return Command(
@@ -933,16 +944,56 @@ def create_cuga_lite_graph(
                         value, name=name, description="Created during code execution"
                     )
 
+                reflection_output = ""
+                if settings.advanced_features.reflection_enabled:
+                    try:
+                        reflection_agent = reflection_task(
+                            llm=llm_manager.get_model(settings.agent.planner.model)
+                        )
+                        # Format chat messages as history string
+                        agent_history_parts = []
+                        for msg in state.chat_messages:
+                            if isinstance(msg, HumanMessage):
+                                agent_history_parts.append(f"User: {msg.content}")
+                            elif isinstance(msg, AIMessage):
+                                agent_history_parts.append(f"Assistant: {msg.content}")
+                            else:
+                                agent_history_parts.append(
+                                    f"{type(msg).__name__}: {getattr(msg, 'content', str(msg))}"
+                                )
+                        agent_history = (
+                            "\n".join(agent_history_parts)
+                            if agent_history_parts
+                            else "No previous conversation history"
+                        )
+
+                        reflection_result = await reflection_agent.ainvoke(
+                            {
+                                "instructions": "",
+                                "current_task": state.sub_task,
+                                "agent_history": agent_history,
+                                "shortlister_agent_output": "",
+                                "coder_agent_output": output,
+                            }
+                        )
+                        reflection_output = reflection_result.content
+                        logger.debug(f"Reflection output:\n{reflection_output}")
+                    except Exception as e:
+                        logger.warning(f"Reflection failed: {e}")
+                        reflection_output = ""
+
+                execution_message_content = f"Execution output preview:\n{output.strip()[:2500]}{'...' if len(output.strip()) > 2500 else ''} Execution output:\n{output}"
+                if reflection_output:
+                    execution_message_content = f"{reflection_output}\n\n{execution_message_content}"
+
                 tracker.collect_step(
                     step=Step(
                         name="User_return",
-                        data=f"Execution output preview:\n{output.strip()[:2500]}{'...' if len(output.strip()) > 2500 else ''} Execution output:\n{output}",
+                        data=execution_message_content,
                     )
                 )
 
-                new_message = HumanMessage(
-                    content=f"Execution output preview:\n{output.strip()[:2500]}{'...' if len(output.strip()) > 2500 else ''} Execution output:\n{output}"
-                )
+                new_message = HumanMessage(content=execution_message_content)
                 updated_messages, error_message = append_chat_messages_with_step_limit(state, [new_message])
 
                 if error_message:
@@ -988,7 +1039,9 @@ def create_cuga_lite_graph(
     tools_context = {}
 
     # Create node instances using factories
-    prepare_node = create_prepare_node(tool_provider, prompt_template, instructions, tools_context)
+    prepare_node = create_prepare_node(
+        tool_provider, prompt_template, instructions, tools_context, special_instructions
+    )
     call_model_node = create_call_model_node(model, callbacks)
     sandbox_node = create_sandbox_node(tools_context, thread_id, apps_list)
 

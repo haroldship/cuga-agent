@@ -1,4 +1,5 @@
 from typing import Callable
+import asyncio
 from loguru import logger
 from cuga.config import settings
 
@@ -53,10 +54,19 @@ class CallApiHelper:
             if args is None:
                 args = {}
 
+            timeout_seconds = getattr(settings.advanced_features, 'tool_call_timeout', 30)
+
             try:
                 # First try tracker (for runtime tools)
                 if tracker.tools and app_name in tracker.tools:
-                    result = await tracker.invoke_tool(app_name, api_name, args)
+                    try:
+                        result = await asyncio.wait_for(
+                            tracker.invoke_tool(app_name, api_name, args), timeout=timeout_seconds
+                        )
+                    except asyncio.TimeoutError:
+                        raise TimeoutError(
+                            f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
+                        )
 
                     if not isinstance(result, dict):
                         if hasattr(result, 'model_dump'):
@@ -80,7 +90,7 @@ class CallApiHelper:
                                 url,
                                 json=payload,
                                 headers={"accept": "application/json", "Content-Type": "application/json"},
-                                timeout=aiohttp.ClientTimeout(total=30),
+                                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
                             ) as response:
                                 if response.status != 200:
                                     error_text = await response.text()
@@ -91,11 +101,17 @@ class CallApiHelper:
                                     return json.loads(response_data)
                                 except json.JSONDecodeError:
                                     return response_data
+                    except asyncio.TimeoutError:
+                        raise TimeoutError(
+                            f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
+                        )
                     except Exception as e:
                         raise Exception(f"Error calling API {api_name}: {str(e)}")
                 else:
                     raise ValueError(f"Server '{app_name}' not found in tracker and registry is disabled")
 
+            except TimeoutError:
+                raise
             except Exception as e:
                 logger.error(f"Error calling {app_name}.{api_name}: {e}")
                 raise
@@ -122,6 +138,8 @@ class CallApiHelper:
         url_with_trajectory = f"{function_call_url}/functions/call"
         if trajectory_path:
             url_with_trajectory += f"?trajectory_path={trajectory_path}"
+
+        timeout_seconds = getattr(settings.advanced_features, 'tool_call_timeout', 30)
 
         return f"""
 import asyncio
@@ -150,7 +168,7 @@ async def call_api(app_name, api_name, args=None):
                 url,
                 json=payload,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=aiohttp.ClientTimeout(total={timeout_seconds}),
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -161,6 +179,8 @@ async def call_api(app_name, api_name, args=None):
                     return json.loads(response_data)
                 except json.JSONDecodeError:
                     return response_data
+    except asyncio.TimeoutError:
+        raise TimeoutError(f"Tool call '{{api_name}}' timed out after {timeout_seconds} seconds")
     except Exception as e:
         raise Exception(f"Error calling API {{api_name}}: {{str(e)}}")
 """

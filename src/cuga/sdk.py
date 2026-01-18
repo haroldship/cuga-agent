@@ -714,6 +714,7 @@ class CugaAgent:
         model: Optional[BaseChatModel] = None,
         callbacks: Optional[List[BaseCallbackHandler]] = None,
         policy_system: Optional[PolicyConfigurable] = None,
+        special_instructions: Optional[str] = None,
     ):
         """
         Initialize the CUGA Agent.
@@ -724,6 +725,7 @@ class CugaAgent:
             model: Language model to use (defaults to configured model)
             callbacks: List of callback handlers
             policy_system: Optional PolicyConfigurable instance (auto-created if not provided)
+            special_instructions: Optional special instructions to add to the agent's system prompt
 
         Example with tool approval policy:
             ```python
@@ -752,6 +754,7 @@ class CugaAgent:
         self._graph = None
         self._compiled_graph = None
         self._policy_system = policy_system
+        self._special_instructions = special_instructions
 
         # Setup tool provider
         if tool_provider:
@@ -816,6 +819,7 @@ class CugaAgent:
             tool_provider=self.tool_provider,
             thread_id=thread_id,
             callbacks=self._callbacks,
+            special_instructions=self._special_instructions,
         )
         # Compile subgraph without checkpointer so it streams internal updates
         compiled_subgraph = cuga_lite_subgraph.compile()

@@ -397,6 +397,7 @@ def create_mcp_prompt(
     is_autonomous_subtask=False,
     prompt_template=None,
     enable_find_tools=False,
+    special_instructions=None,
 ):
     """Create a prompt for CodeAct agent that works with MCP tools.
 
@@ -456,5 +457,6 @@ def create_mcp_prompt(
         task_loaded_from_file=task_loaded_from_file,
         is_autonomous_subtask=is_autonomous_subtask,
         enable_find_tools=enable_find_tools,
+        special_instructions=special_instructions,
     )
     return prompt

@@ -7,6 +7,7 @@ First checks tracker for runtime tools, then falls back to registry.
 
 from typing import List, Dict, Optional, Any
 import aiohttp
+import asyncio
 
 from loguru import logger
 from langchain_core.tools import StructuredTool
@@ -126,9 +127,19 @@ def create_tool_from_tracker(tool_name: str, tool_def: Dict[str, Any], app_name:
             # Add keyword arguments
             all_kwargs.update(kwargs)
 
-            # Use tracker.invoke_tool instead of call_api
-            result = await tracker.invoke_tool(app_name, tool_name, all_kwargs)
-            return result
+            # Use tracker.invoke_tool with timeout
+            timeout_seconds = getattr(settings.advanced_features, 'tool_call_timeout', 30)
+            try:
+                result = await asyncio.wait_for(
+                    tracker.invoke_tool(app_name, tool_name, all_kwargs), timeout=timeout_seconds
+                )
+                return result
+            except asyncio.TimeoutError:
+                error_msg = f"Tool call '{tool_name}' timed out after {timeout_seconds} seconds"
+                logger.error(error_msg)
+                raise TimeoutError(error_msg)
+        except TimeoutError:
+            raise
         except Exception as e:
             error_msg = f"Error calling {tool_name} via tracker: {str(e)}"
             logger.error(error_msg)

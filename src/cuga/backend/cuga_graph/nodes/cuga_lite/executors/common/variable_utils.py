@@ -110,6 +110,22 @@ class VariableUtils:
         return reordered_vars
 
     @staticmethod
+    def filter_single_letter_variables(new_vars: dict[str, Any]) -> dict[str, Any]:
+        """Filter out variables with single-letter names.
+
+        Args:
+            new_vars: Dictionary of new variables
+
+        Returns:
+            Dictionary with single-letter variable names removed
+        """
+        if not new_vars:
+            return new_vars
+
+        filtered_vars = {name: value for name, value in new_vars.items() if len(name) > 1}
+        return filtered_vars
+
+    @staticmethod
     def limit_variables_to_keep(new_vars: dict[str, Any], keep_last_n: int) -> dict[str, Any]:
         """Limit the number of variables to keep, keeping only the last N variables.
 

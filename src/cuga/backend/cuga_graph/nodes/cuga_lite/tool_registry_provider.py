@@ -6,6 +6,7 @@ Provides tools from the MCP registry (separate process).
 
 import aiohttp
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 from loguru import logger
 from pydantic import create_model, Field
@@ -16,6 +17,7 @@ from cuga.backend.cuga_graph.nodes.cuga_lite.tool_provider_interface import (
     ToolProviderInterface,
     AppDefinition,
 )
+from cuga.config import settings
 
 
 async def call_api(app_name: str, api_name: str, args: Dict[str, Any] = None):
@@ -37,13 +39,15 @@ async def call_api(app_name: str, api_name: str, args: Dict[str, Any] = None):
 
     payload = {"function_name": api_name, "app_name": app_name, "args": args}
 
+    timeout_seconds = getattr(settings.advanced_features, 'tool_call_timeout', 30)
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 registry_host,
                 json=payload,
                 headers={"accept": "application/json", "Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -54,6 +58,8 @@ async def call_api(app_name: str, api_name: str, args: Dict[str, Any] = None):
                     return json.loads(response_data)
                 except json.JSONDecodeError:
                     return response_data
+    except asyncio.TimeoutError:
+        raise TimeoutError(f"Tool call '{api_name}' timed out after {timeout_seconds} seconds")
     except Exception as e:
         raise Exception(f"Error calling API {api_name}: {str(e)}")
 
@@ -183,8 +189,11 @@ def create_tool_from_api_dict(tool_name: str, tool_def: Dict[str, Any], app_name
             # Add keyword arguments
             all_kwargs.update(kwargs)
 
+            # Call API with timeout (timeout is handled inside call_api)
             result = await call_api(app_name, tool_name, all_kwargs)
             return result
+        except TimeoutError:
+            raise
         except Exception as e:
             error_msg = f"Error calling {tool_name}: {str(e)}"
             logger.error(error_msg)

@@ -265,14 +265,25 @@ class PolicyConfigurable:
         chat_messages = getattr(state, "chat_messages", None)
 
         # If no user_input but we have chat_messages, extract the last user message
+        # Skip messages that contain execution output (for OUTPUT_FORMATTER policies)
         if not user_input and chat_messages:
             from langchain_core.messages import HumanMessage
 
-            # Find the last human message
+            # Find the last human message that does NOT contain execution output
             for msg in reversed(chat_messages):
                 if isinstance(msg, HumanMessage) or (hasattr(msg, 'type') and msg.type == 'human'):
-                    user_input = msg.content if hasattr(msg, 'content') else str(msg)
-                    break
+                    content = msg.content if hasattr(msg, 'content') else str(msg)
+                    # Skip messages that contain execution output indicators
+                    if content and not any(
+                        indicator in content
+                        for indicator in [
+                            "Execution output",
+                            "Execution output preview",
+                            "Error during execution",
+                        ]
+                    ):
+                        user_input = content
+                        break
 
         if chat_messages:
             # Convert message objects to strings

@@ -1,9 +1,19 @@
 import asyncio
 import json
+from cuga.config import settings
 
 
 class RestrictedEnvironment:
     """Manages restricted execution environment for local code execution."""
+
+    @staticmethod
+    def is_benchmark_mode() -> bool:
+        """Check if benchmark mode is enabled (non-default benchmark setting).
+
+        Returns:
+            True if benchmark mode is enabled, False otherwise
+        """
+        return settings.advanced_features.benchmark != "default"
 
     @staticmethod
     def create_restricted_import(allowed_modules: set):
@@ -13,8 +23,11 @@ class RestrictedEnvironment:
             allowed_modules: Set of allowed module names
 
         Returns:
-            Restricted import function
+            Restricted import function, or original import if benchmark mode is enabled
         """
+        if RestrictedEnvironment.is_benchmark_mode():
+            return __builtins__['__import__'] if isinstance(__builtins__, dict) else __builtins__.__import__
+
         _original_import = (
             __builtins__['__import__'] if isinstance(__builtins__, dict) else __builtins__.__import__
         )
@@ -34,8 +47,15 @@ class RestrictedEnvironment:
             restricted_import_func: The restricted import function to use
 
         Returns:
-            Dictionary of safe builtins
+            Dictionary of safe builtins, or full builtins if benchmark mode is enabled
         """
+        if RestrictedEnvironment.is_benchmark_mode():
+            # Return full builtins in benchmark mode
+            if isinstance(__builtins__, dict):
+                return __builtins__.copy()
+            else:
+                return dict(__builtins__.__dict__)
+
         return {
             'dict': dict,
             'list': list,
@@ -95,6 +115,7 @@ class RestrictedEnvironment:
             'False': False,
             'locals': locals,
             'vars': vars,
+            'staticmethod': staticmethod,
             '__name__': '__restricted__',
             '__build_class__': __build_class__,
             '__import__': restricted_import_func,
@@ -109,8 +130,38 @@ class RestrictedEnvironment:
             safe_locals: Dictionary of safe local variables/tools
 
         Returns:
-            Dictionary of restricted globals
+            Dictionary of restricted globals, or unrestricted globals if benchmark mode is enabled
         """
+        if RestrictedEnvironment.is_benchmark_mode():
+            # In benchmark mode, return unrestricted globals
+            unrestricted_globals = {
+                "__builtins__": safe_builtins,
+            }
+            # Add common modules
+            try:
+                import sys
+
+                unrestricted_globals["sys"] = sys
+            except ImportError:
+                pass
+            try:
+                import os
+
+                unrestricted_globals["os"] = os
+            except ImportError:
+                pass
+            unrestricted_globals["asyncio"] = asyncio
+            unrestricted_globals["json"] = json
+            try:
+                import pandas as pd
+
+                unrestricted_globals["pd"] = pd
+                unrestricted_globals["pandas"] = pd
+            except ImportError:
+                pass
+            unrestricted_globals.update(safe_locals)
+            return unrestricted_globals
+
         restricted_globals = {
             "__builtins__": safe_builtins,
             "asyncio": asyncio,

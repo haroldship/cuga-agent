@@ -3,6 +3,8 @@ import re
 from typing import List, Set, Tuple
 from loguru import logger
 
+from .benchmark_mode import is_benchmark_mode
+
 
 class SecurityValidator:
     """Handles security validation for code execution."""
@@ -16,6 +18,8 @@ class SecurityValidator:
         'numpy',
         'statistics',
         'datetime',
+        '_strptime',
+        'time',
         'math',
         'collections',
         'itertools',
@@ -101,6 +105,9 @@ class SecurityValidator:
         Raises:
             ImportError: If dangerous or disallowed imports are found
         """
+        if is_benchmark_mode():
+            return
+
         try:
             tree = ast.parse(code)
             for node in ast.walk(tree):
@@ -144,6 +151,9 @@ class SecurityValidator:
         Raises:
             PermissionError: If dangerous modules are detected
         """
+        if is_benchmark_mode():
+            return
+
         for dangerous_module in ['os', 'sys', 'subprocess', 'pathlib', 'shutil']:
             if re.search(rf'\bimport\s+{dangerous_module}\b', wrapped_code) or re.search(
                 rf'\bfrom\s+{dangerous_module}\b', wrapped_code
@@ -165,6 +175,9 @@ class SecurityValidator:
         Raises:
             PermissionError: If dangerous modules or suspicious patterns are detected
         """
+        if is_benchmark_mode():
+            return
+
         SecurityValidator.validate_dangerous_modules(wrapped_code)
 
         code_without_comments = '\n'.join(line.split('#')[0] for line in wrapped_code.split('\n'))
@@ -188,8 +201,11 @@ class SecurityValidator:
             locals_dict: Dictionary of local variables
 
         Returns:
-            Filtered dictionary with dangerous modules removed
+            Filtered dictionary with dangerous modules removed, or original dict if benchmark mode
         """
+        if is_benchmark_mode():
+            return locals_dict
+
         return {k: v for k, v in locals_dict.items() if k not in SecurityValidator.DANGEROUS_MODULE_NAMES}
 
     @staticmethod
@@ -202,6 +218,9 @@ class SecurityValidator:
         Raises:
             AssertionError: If dangerous modules are found
         """
+        if is_benchmark_mode():
+            return
+
         assert 'os' not in restricted_globals, "Security violation: os module in restricted_globals!"
         assert 'sys' not in restricted_globals, "Security violation: sys module in restricted_globals!"
         assert 'subprocess' not in restricted_globals, "Security violation: subprocess in restricted_globals!"
@@ -217,6 +236,8 @@ class SecurityValidator:
         Raises:
             ValueError: If code doesn't use any context variables
         """
+        if is_benchmark_mode():
+            return
         if not context_locals:
             return
 

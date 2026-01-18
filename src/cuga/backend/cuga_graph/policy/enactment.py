@@ -73,7 +73,10 @@ class PolicyEnactment:
             logger.debug(f"PolicyEnactment: Got policy system: {policy_system}")
 
             # Create context from state
+            # Note: create_context_from_state already extracts user_input without execution output
+            # and get_target_text() automatically combines user_input + agent_response for "agent_response" target
             context = PolicyConfigurable.create_context_from_state(state, config or {})
+
             logger.debug(
                 f"PolicyEnactment: Created context with user_input='{context.user_input}', inferred target='{target}'"
             )
@@ -836,7 +839,12 @@ Important:
 - Do not remove important details
 - Follow the formatting instructions exactly"""
 
-            user_prompt = f"""Original AI Response:
+            # Include user input if available
+            user_input_section = ""
+            if hasattr(context, "user_input") and context.user_input:
+                user_input_section = f"User Input: {context.user_input}\n\n"
+
+            user_prompt = f"""{user_input_section}Agent Response:
 {last_ai_message}
 
 Please reformat this response according to the instructions above."""
@@ -870,7 +878,12 @@ Important:
 - Preserve all factual information
 - Return valid JSON matching the schema exactly"""
 
-                user_prompt = f"""Original AI Response:
+                # Include user input if available
+                user_input_section = ""
+                if hasattr(context, "user_input") and context.user_input:
+                    user_input_section = f"User Input: {context.user_input}\n\n"
+
+                user_prompt = f"""{user_input_section}Agent Response:
 {last_ai_message}
 
 Extract and format the information from this response as JSON according to the schema."""

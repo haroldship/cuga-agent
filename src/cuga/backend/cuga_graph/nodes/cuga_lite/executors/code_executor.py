@@ -1,10 +1,12 @@
 from typing import Any, List, Literal, Optional
 
+from cuga.backend.activity_tracker.tracker import ActivityTracker
 from cuga.backend.cuga_graph.state.agent_state import AgentState
 from cuga.config import settings
 from loguru import logger
 
 from .common import SecurityValidator, CodeWrapper, VariableUtils, CallApiHelper
+from .common.benchmark_mode import is_benchmark_mode
 from .local import LocalExecutor
 from .e2b import E2BExecutor
 from .docker import DockerExecutor
@@ -75,7 +77,9 @@ class CodeExecutor:
 
         SecurityValidator.validate_imports(code)
 
-        wrapped_code = CodeWrapper.wrap_code(code)
+        tracker = ActivityTracker()
+        fake_datetime = tracker.current_date if tracker.current_date and is_benchmark_mode() else None
+        wrapped_code = CodeWrapper.wrap_code(code, fake_datetime=fake_datetime)
 
         SecurityValidator.validate_wrapped_code(wrapped_code)
 
@@ -106,6 +110,9 @@ class CodeExecutor:
 
         new_vars = VariableUtils.reorder_variables_by_print(new_vars, code)
 
+        # TODO: Uncomment this when we have a way to handle single-letter variable names inside loops etc.
+        # new_vars = VariableUtils.filter_single_letter_variables(new_vars)
+
         # Limit variables to keep based on configuration
         keep_last_n = settings.advanced_features.code_executor_keep_last_n
         new_vars = VariableUtils.limit_variables_to_keep(new_vars, keep_last_n)
@@ -115,13 +122,16 @@ class CodeExecutor:
         return result, new_vars
 
     @classmethod
-    def _wrap_code_for_code_agent(cls, code: str) -> str:
+    def _wrap_code_for_code_agent(cls, code: str, fake_datetime: Optional[str] = None) -> str:
         """Wrap code for CodeAgent execution."""
         indented_code = '\n'.join('    ' + line for line in code.split('\n'))
+
+        datetime_mock = CodeWrapper.create_datetime_mock(fake_datetime)
 
         wrapped_code = f"""
 import asyncio
 import json
+{datetime_mock}
 async def _async_main():
 {indented_code}
     return locals()
@@ -209,7 +219,9 @@ async def _async_main():
         if mode is None:
             mode = 'e2b' if settings.advanced_features.e2b_sandbox else 'local'
 
-        wrapped_code = cls._wrap_code_for_code_agent(code)
+        tracker = ActivityTracker()
+        fake_datetime = tracker.current_date if tracker.current_date and is_benchmark_mode() else None
+        wrapped_code = cls._wrap_code_for_code_agent(code, fake_datetime=fake_datetime)
 
         if mode in ('e2b', 'docker'):
             return await cls._execute_remotely_for_code_agent(wrapped_code, state, mode)
