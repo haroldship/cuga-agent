@@ -1066,6 +1066,10 @@ class CugaAgent:
         run_config = config or {}
         if "configurable" not in run_config:
             run_config["configurable"] = {}
+
+        # Ensure graph is created (needed for state retrieval)
+        _ = self.graph
+
         # Handle resume case (message is None or action_response is provided)
         if message is None or action_response is not None:
             if not thread_id:
@@ -1115,27 +1119,60 @@ class CugaAgent:
         # Normal invocation case
         # Convert message to list of BaseMessage
         if isinstance(message, str):
-            messages = [HumanMessage(content=message)]
+            new_messages = [HumanMessage(content=message)]
         else:
-            messages = message
+            new_messages = message
 
         # Auto-generate thread_id if not provided (required for checkpointer)
         if not thread_id:
             thread_id = f"sdk_{uuid.uuid4().hex[:8]}"
             logger.debug(f"Auto-generated thread_id: {thread_id}")
 
-        # Create initial state for HITL wrapper graph (uses AgentState format)
-        # The wrapper will pass this to CugaLiteSubgraph which expects CugaLiteState format
-        initial_state = {
-            "chat_messages": messages,
-            "thread_id": thread_id,
-            "pi": user_context,
-            "input": messages[-1].content if messages else "",
-            "url": "",  # Required by AgentState (used for web navigation, empty for SDK)
-        }
-        initial_state_pydantic = AgentState(**initial_state)
-
+        # Setup config early to check for existing state
         run_config["configurable"]["thread_id"] = thread_id
+
+        # Try to get existing state for this thread_id
+        existing_state = None
+        try:
+            state_snapshot = self.graph.get_state(run_config)
+            if state_snapshot and state_snapshot.values:
+                existing_state = AgentState(**state_snapshot.values)
+                logger.debug(f"Found existing state for thread_id: {thread_id}")
+        except Exception as e:
+            logger.debug(f"No existing state found for thread_id {thread_id}: {e}")
+
+        # Build state: use existing state if available, otherwise create new
+        if existing_state:
+            # Append new messages to existing chat history
+            existing_chat_messages = existing_state.chat_messages or []
+            updated_chat_messages = existing_chat_messages + new_messages
+
+            # Update existing state with new messages
+            initial_state_dict = existing_state.model_dump()
+            initial_state_dict["chat_messages"] = updated_chat_messages
+            initial_state_dict["input"] = new_messages[-1].content if new_messages else ""
+
+            # Update user_context (pi) if provided
+            if user_context:
+                initial_state_dict["pi"] = user_context
+
+            initial_state_pydantic = AgentState(**initial_state_dict)
+            logger.debug(
+                f"Appended {len(new_messages)} new message(s) to existing conversation "
+                f"({len(existing_chat_messages)} existing messages)"
+            )
+        else:
+            # Create new state for HITL wrapper graph (uses AgentState format)
+            # The wrapper will pass this to CugaLiteSubgraph which expects CugaLiteState format
+            initial_state = {
+                "chat_messages": new_messages,
+                "thread_id": thread_id,
+                "pi": user_context,
+                "input": new_messages[-1].content if new_messages else "",
+                "url": "",  # Required by AgentState (used for web navigation, empty for SDK)
+            }
+            initial_state_pydantic = AgentState(**initial_state)
+            logger.debug(f"Created new state for thread_id: {thread_id}")
 
         # Add policy system to config if available
         if self._policy_system:
@@ -1150,7 +1187,8 @@ class CugaAgent:
             )
 
         # Invoke the graph
-        logger.debug(f"Invoking agent with {len(messages)} messages")
+        total_messages = len(initial_state_pydantic.chat_messages or [])
+        logger.debug(f"Invoking agent with {total_messages} total message(s) in conversation")
         result = await self.graph.ainvoke(initial_state_pydantic, config=run_config)
 
         # Extract final answer
