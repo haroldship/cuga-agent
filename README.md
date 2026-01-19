@@ -448,7 +448,7 @@ async def main():
     )
 
     result = await agent.invoke("Analyze my budget: expenses are 5000 and 3000, revenue is 12000")
-    print(result)
+    print(result.answer)  # The agent's response
 
 if __name__ == "__main__":
     asyncio.run(main())

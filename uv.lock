@@ -612,7 +612,7 @@ requires-dist = [
     { name = "langchain-core" },
     { name = "langchain-groq", specifier = ">=0.3.8" },
     { name = "langchain-ibm", specifier = ">=0.3.9,<1.0.0" },
-    { name = "langchain-mcp-adapters", specifier = ">=0.1.9" },
+    { name = "langchain-mcp-adapters", specifier = "==0.1.14" },
     { name = "langchain-openai" },
     { name = "langfuse" },
     { name = "langgraph" },

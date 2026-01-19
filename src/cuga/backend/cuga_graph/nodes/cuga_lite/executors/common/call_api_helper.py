@@ -1,5 +1,6 @@
 from typing import Callable
 import asyncio
+import time
 from loguru import logger
 from cuga.config import settings
 
@@ -46,15 +47,26 @@ class CallApiHelper:
         import aiohttp
         from cuga.backend.tools_env.registry.utils.api_utils import get_registry_base_url
         from cuga.backend.activity_tracker.tracker import ActivityTracker
+        from cuga.backend.cuga_graph.nodes.cuga_lite.tool_call_tracker import ToolCallTracker
 
         tracker = ActivityTracker()
 
-        async def call_api(app_name: str, api_name: str, args: dict = None):
-            """Call API tool via tracker or registry."""
+        async def call_api(app_name: str, api_name: str, args: dict = None, operation_id: str = None):
+            """Call API tool via tracker or registry.
+
+            Args:
+                app_name: Name of the app/server
+                api_name: Name of the API/tool
+                args: Arguments to pass to the API
+                operation_id: Optional original OpenAPI operationId for tracking
+            """
             if args is None:
                 args = {}
 
             timeout_seconds = getattr(settings.advanced_features, 'tool_call_timeout', 30)
+            start_time = time.time()
+            result = None
+            error_msg = None
 
             try:
                 # First try tracker (for runtime tools)
@@ -64,17 +76,16 @@ class CallApiHelper:
                             tracker.invoke_tool(app_name, api_name, args), timeout=timeout_seconds
                         )
                     except asyncio.TimeoutError:
-                        raise TimeoutError(
-                            f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
-                        )
+                        error_msg = f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
+                        raise TimeoutError(error_msg)
 
                     if not isinstance(result, dict):
                         if hasattr(result, 'model_dump'):
-                            return result.model_dump()
+                            result = result.model_dump()
                         elif hasattr(result, '__dict__'):
-                            return result.__dict__
+                            result = result.__dict__
                         else:
-                            return str(result)
+                            result = str(result)
                     return result
 
                 # Fallback to registry API
@@ -94,27 +105,41 @@ class CallApiHelper:
                             ) as response:
                                 if response.status != 200:
                                     error_text = await response.text()
-                                    raise Exception(f"HTTP Error: {response.status} - {error_text}")
+                                    error_msg = f"HTTP Error: {response.status} - {error_text}"
+                                    raise Exception(error_msg)
 
                                 response_data = await response.text()
                                 try:
-                                    return json.loads(response_data)
+                                    result = json.loads(response_data)
                                 except json.JSONDecodeError:
-                                    return response_data
+                                    result = response_data
+                                return result
                     except asyncio.TimeoutError:
-                        raise TimeoutError(
-                            f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
-                        )
+                        error_msg = f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
+                        raise TimeoutError(error_msg)
                     except Exception as e:
-                        raise Exception(f"Error calling API {api_name}: {str(e)}")
+                        error_msg = f"Error calling API {api_name}: {str(e)}"
+                        raise Exception(error_msg)
                 else:
-                    raise ValueError(f"Server '{app_name}' not found in tracker and registry is disabled")
+                    error_msg = f"Server '{app_name}' not found in tracker and registry is disabled"
+                    raise ValueError(error_msg)
 
             except TimeoutError:
                 raise
             except Exception as e:
                 logger.error(f"Error calling {app_name}.{api_name}: {e}")
                 raise
+            finally:
+                duration_ms = (time.time() - start_time) * 1000
+                ToolCallTracker.record_call(
+                    tool_name=api_name,
+                    arguments=args,
+                    result=result,
+                    app_name=app_name,
+                    operation_id=operation_id,
+                    duration_ms=duration_ms,
+                    error=error_msg,
+                )
 
         return call_api
 

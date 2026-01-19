@@ -39,6 +39,7 @@ def create_tool_from_tracker(tool_name: str, tool_def: Dict[str, Any], app_name:
 
     description = tool_def.get('description', '')
     parameters = tool_def.get('parameters', {})
+    operation_id = tool_def.get('operation_id')  # Original OpenAPI operationId if available
 
     # Convert OpenAPI parameter format to JSON schema format if needed
     if isinstance(parameters, list):
@@ -110,7 +111,17 @@ def create_tool_from_tracker(tool_name: str, tool_def: Dict[str, Any], app_name:
     else:
         InputModel = create_model(f"{tool_name}Input")
 
+    # Capture operation_id in closure for the tool function
+    _operation_id = operation_id
+
     async def tool_func(*args, **kwargs):
+        import time
+        from cuga.backend.cuga_graph.nodes.cuga_lite.tool_call_tracker import ToolCallTracker
+
+        start_time = time.time()
+        result = None
+        error_msg = None
+
         try:
             # Combine positional and keyword arguments
             all_kwargs = {}
@@ -144,6 +155,17 @@ def create_tool_from_tracker(tool_name: str, tool_def: Dict[str, Any], app_name:
             error_msg = f"Error calling {tool_name} via tracker: {str(e)}"
             logger.error(error_msg)
             return {"error": error_msg}
+        finally:
+            duration_ms = (time.time() - start_time) * 1000
+            ToolCallTracker.record_call(
+                tool_name=tool_name,
+                arguments=all_kwargs if 'all_kwargs' in dir() else {},
+                result=result,
+                app_name=app_name,
+                operation_id=_operation_id,
+                duration_ms=duration_ms,
+                error=error_msg,
+            )
 
     tool_func.__name__ = tool_name
     tool_func.__doc__ = description
@@ -156,6 +178,10 @@ def create_tool_from_tracker(tool_name: str, tool_def: Dict[str, Any], app_name:
 
     if not hasattr(tool.func, '_param_constraints'):
         tool.func._param_constraints = param_constraints
+
+    # Store metadata for tool call tracking
+    tool.func._operation_id = operation_id
+    tool.func._app_name = app_name
 
     return tool
 

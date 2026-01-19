@@ -192,6 +192,9 @@ class CugaLiteState(BaseModel):
     error: Optional[str] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
     step_count: int = 0  # Counter for number of steps (call_model + sandbox cycles)
+    tool_calls: List[Dict[str, Any]] = Field(
+        default_factory=list
+    )  # List of tracked tool calls (when track_tool_calls is enabled)
 
     class Config:
         arbitrary_types_allowed = True
@@ -901,6 +904,8 @@ def create_cuga_lite_graph(
 
         async def sandbox(state: CugaLiteState, config: Optional[RunnableConfig] = None):
             """Execute code in sandbox and return results."""
+            from cuga.backend.cuga_graph.nodes.cuga_lite.tool_call_tracker import ToolCallTracker
+
             # Check if user denied approval (only if policies are enabled)
             if settings.policy.enabled:
                 denial_command = ToolApprovalHandler.handle_denial(state)
@@ -911,6 +916,7 @@ def create_cuga_lite_graph(
             configurable = config.get("configurable", {}) if config else {}
             current_thread_id = configurable.get("thread_id", base_thread_id)
             current_apps_list = configurable.get("apps_list", base_apps_list)
+            track_tool_calls = configurable.get("track_tool_calls", False)
 
             # Get existing variables using CugaLiteState's own variables_manager
             existing_vars = {}
@@ -919,6 +925,9 @@ def create_cuga_lite_graph(
 
             # Add tools to context
             context = {**existing_vars, **base_tools_context}
+
+            # Start tool call tracking (only if enabled via invoke parameter)
+            ToolCallTracker.start_tracking(enabled=track_tool_calls)
 
             try:
                 # Execute the script - pass the CugaLiteState itself since it has variables_manager
@@ -996,6 +1005,10 @@ def create_cuga_lite_graph(
                 new_message = HumanMessage(content=execution_message_content)
                 updated_messages, error_message = append_chat_messages_with_step_limit(state, [new_message])
 
+                # Collect tool calls from this execution
+                execution_tool_calls = ToolCallTracker.stop_tracking()
+                accumulated_tool_calls = (state.tool_calls or []) + execution_tool_calls
+
                 if error_message:
                     return create_error_command(
                         updated_messages,
@@ -1005,6 +1018,7 @@ def create_cuga_lite_graph(
                             "variables_storage": state.variables_storage,
                             "variable_counter_state": state.variable_counter_state,
                             "variable_creation_order": state.variable_creation_order,
+                            "tool_calls": accumulated_tool_calls,
                         },
                     )
 
@@ -1014,8 +1028,13 @@ def create_cuga_lite_graph(
                     "variable_counter_state": state.variable_counter_state,
                     "variable_creation_order": state.variable_creation_order,
                     "step_count": state.step_count + 1,
+                    "tool_calls": accumulated_tool_calls,
                 }
             except Exception as e:
+                # Collect tool calls even on error
+                execution_tool_calls = ToolCallTracker.stop_tracking()
+                accumulated_tool_calls = (state.tool_calls or []) + execution_tool_calls
+
                 error_msg = f"Error during execution: {str(e)}"
                 logger.error(error_msg)
                 new_message = HumanMessage(content=error_msg)
@@ -1031,6 +1050,7 @@ def create_cuga_lite_graph(
                     "error": error_msg,
                     "execution_complete": True,
                     "step_count": state.step_count + 1,
+                    "tool_calls": accumulated_tool_calls,
                 }
 
         return sandbox

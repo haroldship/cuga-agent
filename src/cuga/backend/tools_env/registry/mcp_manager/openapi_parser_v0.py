@@ -504,6 +504,7 @@ class OpenAPITransformer:
             "app_name": self.app_name,
             "secure": "security" in op_obj,
             "api_name": sanitized_api_name,
+            "operation_id": operation_id,  # Original OpenAPI operationId for tracking
             "path": path_str,
             "method": method_str.upper(),
             "description": description,

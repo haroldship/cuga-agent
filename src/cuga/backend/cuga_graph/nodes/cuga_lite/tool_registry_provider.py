@@ -20,17 +20,26 @@ from cuga.backend.cuga_graph.nodes.cuga_lite.tool_provider_interface import (
 from cuga.config import settings
 
 
-async def call_api(app_name: str, api_name: str, args: Dict[str, Any] = None):
+async def call_api(
+    app_name: str,
+    api_name: str,
+    args: Dict[str, Any] = None,
+    operation_id: Optional[str] = None,
+):
     """Call an API tool via the registry server.
 
     Args:
         app_name: Name of the app/server
         api_name: Name of the API/tool
         args: Arguments to pass to the API
+        operation_id: Optional original OpenAPI operationId for tracking
 
     Returns:
         The API response
     """
+    import time
+    from cuga.backend.cuga_graph.nodes.cuga_lite.tool_call_tracker import ToolCallTracker
+
     if args is None:
         args = {}
 
@@ -40,6 +49,9 @@ async def call_api(app_name: str, api_name: str, args: Dict[str, Any] = None):
     payload = {"function_name": api_name, "app_name": app_name, "args": args}
 
     timeout_seconds = getattr(settings.advanced_features, 'tool_call_timeout', 30)
+    start_time = time.time()
+    result = None
+    error_msg = None
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -51,17 +63,33 @@ async def call_api(app_name: str, api_name: str, args: Dict[str, Any] = None):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(f"HTTP Error: {response.status} - {error_text}")
+                    error_msg = f"HTTP Error: {response.status} - {error_text}"
+                    raise Exception(error_msg)
 
                 response_data = await response.text()
                 try:
-                    return json.loads(response_data)
+                    result = json.loads(response_data)
                 except json.JSONDecodeError:
-                    return response_data
+                    result = response_data
+                return result
     except asyncio.TimeoutError:
-        raise TimeoutError(f"Tool call '{api_name}' timed out after {timeout_seconds} seconds")
+        error_msg = f"Tool call '{api_name}' timed out after {timeout_seconds} seconds"
+        raise TimeoutError(error_msg)
     except Exception as e:
-        raise Exception(f"Error calling API {api_name}: {str(e)}")
+        if not error_msg:
+            error_msg = f"Error calling API {api_name}: {str(e)}"
+        raise Exception(error_msg)
+    finally:
+        duration_ms = (time.time() - start_time) * 1000
+        ToolCallTracker.record_call(
+            tool_name=api_name,
+            arguments=args,
+            result=result,
+            app_name=app_name,
+            operation_id=operation_id,
+            duration_ms=duration_ms,
+            error=error_msg,
+        )
 
 
 def _convert_openapi_params_to_json_schema(parameters: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -120,6 +148,7 @@ def create_tool_from_api_dict(tool_name: str, tool_def: Dict[str, Any], app_name
     description = tool_def.get('description', '')
     parameters = tool_def.get('parameters', {})
     response_schemas = tool_def.get('response_schemas', {})
+    operation_id = tool_def.get('operation_id')  # Original OpenAPI operationId
 
     # Convert OpenAPI parameter format to JSON schema format if needed
     if isinstance(parameters, list):
@@ -172,6 +201,9 @@ def create_tool_from_api_dict(tool_name: str, tool_def: Dict[str, Any], app_name
     else:
         InputModel = create_model(f"{tool_name}Input")
 
+    # Capture operation_id in closure for the tool function
+    _operation_id = operation_id
+
     async def tool_func(*args, **kwargs):
         try:
             # Combine positional and keyword arguments
@@ -190,7 +222,7 @@ def create_tool_from_api_dict(tool_name: str, tool_def: Dict[str, Any], app_name
             all_kwargs.update(kwargs)
 
             # Call API with timeout (timeout is handled inside call_api)
-            result = await call_api(app_name, tool_name, all_kwargs)
+            result = await call_api(app_name, tool_name, all_kwargs, operation_id=_operation_id)
             return result
         except TimeoutError:
             raise
@@ -213,6 +245,10 @@ def create_tool_from_api_dict(tool_name: str, tool_def: Dict[str, Any], app_name
 
     if not hasattr(tool.func, '_param_constraints'):
         tool.func._param_constraints = param_constraints
+
+    # Store metadata for tool call tracking
+    tool.func._operation_id = operation_id
+    tool.func._app_name = app_name
 
     return tool
 

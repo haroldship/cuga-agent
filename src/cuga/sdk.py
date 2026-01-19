@@ -71,6 +71,7 @@ Tool Approval Example (with HITL):
 from typing import List, Optional, Dict, Any, Union, TYPE_CHECKING
 import uuid
 from loguru import logger
+from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.callbacks import BaseCallbackHandler
@@ -102,6 +103,22 @@ from cuga.backend.cuga_graph.policy.models import (
     AlwaysTrigger,
 )
 from langchain_core.messages import HumanMessage, BaseMessage
+
+
+class InvokeResult(BaseModel):
+    """Result from CugaAgent.invoke() containing answer and metadata."""
+
+    answer: str = Field(default="", description="The agent's final answer")
+    tool_calls: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of tool calls made during execution (when track_tool_calls is enabled)",
+    )
+    thread_id: str = Field(default="", description="Thread ID used for this invocation")
+    error: Optional[str] = Field(default=None, description="Error message if execution failed")
+
+    def __str__(self) -> str:
+        """Return the answer when converting to string for backward compatibility."""
+        return self.answer
 
 
 class PoliciesManager:
@@ -137,8 +154,17 @@ class PoliciesManager:
         """Initialize policies manager with reference to agent."""
         self._agent = agent
 
-    async def _ensure_policy_system(self) -> PolicyConfigurable:
-        """Ensure policy system is initialized."""
+    async def _ensure_policy_system(self) -> Optional[PolicyConfigurable]:
+        """Ensure policy system is initialized if enabled.
+
+        Returns:
+            PolicyConfigurable if enabled, None if disabled via settings.policy.enabled
+        """
+        from cuga.config import settings
+
+        if not settings.policy.enabled:
+            return None
+
         if not hasattr(self._agent, '_policy_system') or self._agent._policy_system is None:
             self._agent._policy_system = PolicyConfigurable()
             await self._agent._policy_system.initialize()
@@ -185,6 +211,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping add_intent_guard")
+            return None
 
         triggers = []
         if keywords:
@@ -268,6 +297,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping add_playbook")
+            return None
 
         triggers = []
         if keywords:
@@ -349,6 +381,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping add_tool_guide")
+            return None
 
         triggers = []
         if keywords:
@@ -423,6 +458,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping add_tool_approval")
+            return None
 
         policy = ToolApproval(
             id=policy_id or f"tool_approval_{uuid.uuid4().hex[:8]}",
@@ -485,6 +523,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping add_output_format")
+            return None
 
         triggers = []
         if keywords:
@@ -545,6 +586,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping delete")
+            return False
 
         try:
             # Check if policy exists first
@@ -576,6 +620,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - returning empty list")
+            return []
 
         policies = await policy_system.storage.list_policies(enabled_only=False)
         return [
@@ -607,6 +654,9 @@ class PoliciesManager:
             ```
         """
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - returning None")
+            return None
 
         policies = await policy_system.storage.list_policies(enabled_only=False)
         for p in policies:
@@ -660,6 +710,10 @@ class PoliciesManager:
         from cuga.backend.cuga_graph.policy.utils import load_policies_from_json
 
         policy_system = await self._ensure_policy_system()
+        if policy_system is None:
+            logger.warning("Policy system is disabled - skipping load_from_json")
+            return {"count": 0, "enabled": 0, "errors": ["Policy system is disabled"]}
+
         result = await load_policies_from_json(
             file_path=file_path,
             storage=policy_system.storage,
@@ -1016,8 +1070,9 @@ class CugaAgent:
         thread_id: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
         action_response: Optional[Any] = None,
-        user_context: Optional[str] = None,  # ActionResponse for resuming after HITL
-    ) -> str:
+        user_context: Optional[str] = None,
+        track_tool_calls: bool = False,
+    ) -> InvokeResult:
         """
         Invoke the agent with a message and get the response.
 
@@ -1029,14 +1084,29 @@ class CugaAgent:
             thread_id: Thread ID (required for resume, auto-generated for new conversations)
             config: Optional LangGraph config (for advanced usage)
             action_response: Optional ActionResponse for resuming after approval/interruption
+            track_tool_calls: If True, tracks all tool calls with metadata (name, arguments,
+                result, operation_id, duration_ms, etc.) and returns them in result.tool_calls
 
         Returns:
-            The agent's final answer as a string
+            InvokeResult containing:
+            - answer: The agent's final answer
+            - tool_calls: List of tool calls made (when track_tool_calls=True)
+            - thread_id: Thread ID used for this invocation
+            - error: Error message if execution failed
 
         Example:
             ```python
-            # Simple single-turn
-            result = await agent.invoke("What's 2+2?")
+            # Simple single-turn with tool call tracking
+            result = await agent.invoke("What's 2+2?", track_tool_calls=True)
+            print(result.answer)  # Access the answer
+            print(result.tool_calls)  # Access tool calls
+
+            # The result also converts to string for backward compatibility
+            print(result)  # Prints the answer
+
+            # Access tool calls with operation_id (original OpenAPI operationId)
+            for call in result.tool_calls:
+                print(f"Tool: {call['name']}, Operation ID: {call.get('operation_id')}")
 
             # Multi-turn conversation
             messages = [
@@ -1066,6 +1136,9 @@ class CugaAgent:
         run_config = config or {}
         if "configurable" not in run_config:
             run_config["configurable"] = {}
+
+        # Pass track_tool_calls flag via configurable
+        run_config["configurable"]["track_tool_calls"] = track_tool_calls
 
         # Ensure graph is created (needed for state retrieval)
         _ = self.graph
@@ -1098,8 +1171,10 @@ class CugaAgent:
             # Extract final answer
             final_answer = result.get("final_answer", "")
 
+            error_msg = None
             if not final_answer and result.get("error"):
-                final_answer = f"Error: {result['error']}"
+                error_msg = result['error']
+                final_answer = f"Error: {error_msg}"
 
             # Check if graph interrupted again
             if not final_answer:
@@ -1114,7 +1189,15 @@ class CugaAgent:
                 except Exception as e:
                     logger.debug(f"Could not check interrupt state: {e}")
 
-            return final_answer
+            # Get tool calls from result (only if tracking was enabled)
+            tool_calls = result.get("tool_calls", []) if track_tool_calls else []
+
+            return InvokeResult(
+                answer=final_answer,
+                tool_calls=tool_calls,
+                thread_id=thread_id,
+                error=error_msg,
+            )
 
         # Normal invocation case
         # Convert message to list of BaseMessage
@@ -1191,11 +1274,13 @@ class CugaAgent:
         logger.debug(f"Invoking agent with {total_messages} total message(s) in conversation")
         result = await self.graph.ainvoke(initial_state_pydantic, config=run_config)
 
-        # Extract final answer
+        # Extract final answer and error
         final_answer = result.get("final_answer", "")
+        error_msg = None
 
         if not final_answer and result.get("error"):
-            final_answer = f"Error: {result['error']}"
+            error_msg = result['error']
+            final_answer = f"Error: {error_msg}"
 
         # Check if graph interrupted for approval
         if not final_answer:
@@ -1210,7 +1295,15 @@ class CugaAgent:
             except Exception as e:
                 logger.debug(f"Could not check interrupt state: {e}")
 
-        return final_answer
+        # Get tool calls from result (only if tracking was enabled)
+        tool_calls = result.get("tool_calls", []) if track_tool_calls else []
+
+        return InvokeResult(
+            answer=final_answer,
+            tool_calls=tool_calls,
+            thread_id=thread_id,
+            error=error_msg,
+        )
 
     async def stream(
         self,

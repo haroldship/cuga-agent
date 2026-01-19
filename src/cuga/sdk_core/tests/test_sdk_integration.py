@@ -79,11 +79,11 @@ class TestSDKInvokeIntegration:
 
         result = await agent.invoke("What is 10 + 5?")
 
-        # Verify result contains the answer
+        # Verify result is InvokeResult with answer
         assert result is not None
-        assert len(result) > 0
+        assert len(result.answer) > 0
         # The agent should use the tool and return 15
-        assert "15" in result
+        assert "15" in result.answer
 
     @pytest.mark.asyncio
     async def test_invoke_with_direct_tools_greeting(self):
@@ -94,7 +94,7 @@ class TestSDKInvokeIntegration:
 
         # Verify result contains greeting
         assert result is not None
-        assert "Alice" in result or "alice" in result.lower()
+        assert "Alice" in result.answer or "alice" in result.answer.lower()
 
     @pytest.mark.asyncio
     async def test_invoke_with_thread_id(self):
@@ -105,7 +105,8 @@ class TestSDKInvokeIntegration:
 
         # Verify result
         assert result is not None
-        assert "56" in result
+        assert "56" in result.answer
+        assert result.thread_id == "test-thread-123"
 
     @pytest.mark.asyncio
     async def test_invoke_with_tool_provider(self):
@@ -117,7 +118,7 @@ class TestSDKInvokeIntegration:
 
         # Verify result contains user count
         assert result is not None
-        assert "150" in result
+        assert "150" in result.answer
 
     @pytest.mark.asyncio
     async def test_invoke_multi_step_task(self):
@@ -128,7 +129,31 @@ class TestSDKInvokeIntegration:
 
         # Verify result contains 45
         assert result is not None
-        assert "45" in result
+        assert "45" in result.answer
+
+    @pytest.mark.asyncio
+    async def test_invoke_with_tool_tracking(self):
+        """Test invoke with track_tool_calls=True returns tool call metadata"""
+        agent = CugaAgent(tools=[add_numbers])
+
+        result = await agent.invoke("What is 10 + 5?", track_tool_calls=True)
+
+        # Verify result is InvokeResult with answer and tool_calls
+        assert result is not None
+        assert "15" in result.answer
+        # Tool calls should be tracked when enabled
+        assert isinstance(result.tool_calls, list)
+
+    @pytest.mark.asyncio
+    async def test_invoke_result_str_compatibility(self):
+        """Test that InvokeResult converts to string for backward compatibility"""
+        agent = CugaAgent(tools=[add_numbers])
+
+        result = await agent.invoke("What is 3 + 4?")
+
+        # str(result) should return the answer
+        assert str(result) == result.answer
+        assert "7" in str(result)
 
 
 class TestSDKStreamIntegration:
@@ -216,7 +241,7 @@ class TestSDKModelConfiguration:
         # Invoke to ensure it works
         result = await agent.invoke("What is 3 + 4?")
         assert result is not None
-        assert "7" in result
+        assert "7" in result.answer
 
     @pytest.mark.asyncio
     async def test_custom_model(self):
@@ -234,7 +259,7 @@ class TestSDKModelConfiguration:
         # Invoke to ensure it works
         result = await agent.invoke("What is 5 + 6?")
         assert result is not None
-        assert "11" in result
+        assert "11" in result.answer
 
 
 class TestSDKToolManagement:
@@ -247,14 +272,14 @@ class TestSDKToolManagement:
 
         # First invocation with only add_numbers
         result1 = await agent.invoke("What is 8 + 9?")
-        assert "17" in result1
+        assert "17" in result1.answer
 
         # Add multiply tool
         agent.add_tool(multiply_numbers)
 
         # Second invocation can now use multiply
         result2 = await agent.invoke("What is 4 * 5?")
-        assert "20" in result2
+        assert "20" in result2.answer
 
     @pytest.mark.asyncio
     async def test_add_multiple_tools_dynamically(self):
@@ -266,7 +291,7 @@ class TestSDKToolManagement:
 
         # Verify all tools work
         result = await agent.invoke("Add 10 and 5")
-        assert "15" in result
+        assert "15" in result.answer
 
 
 class TestSDKHelperFunctions:
@@ -277,9 +302,9 @@ class TestSDKHelperFunctions:
         """Test run_agent convenience function"""
         result = await run_agent("What is 12 + 13?", tools=[add_numbers])
 
-        # Verify result
+        # Verify result - run_agent returns InvokeResult
         assert result is not None
-        assert "25" in result
+        assert "25" in result.answer
 
 
 class TestSDKToolProvider:
@@ -296,7 +321,7 @@ class TestSDKToolProvider:
 
         assert tool_provider.initialized
         assert result is not None
-        assert "5" in result
+        assert "5" in result.answer
 
     @pytest.mark.asyncio
     async def test_tool_provider_with_multiple_tools(self):
@@ -306,10 +331,10 @@ class TestSDKToolProvider:
 
         # Test different tools
         result1 = await agent.invoke("How many users?")
-        assert "150" in result1
+        assert "150" in result1.answer
 
         result2 = await agent.invoke("Greet Bob")
-        assert "Bob" in result2 or "bob" in result2.lower()
+        assert "Bob" in result2.answer or "bob" in result2.answer.lower()
 
 
 class TestSDKErrorHandling:
@@ -325,7 +350,7 @@ class TestSDKErrorHandling:
 
         # Agent should respond even without tools
         assert result is not None
-        assert len(result) > 0
+        assert len(result.answer) > 0
 
     @pytest.mark.asyncio
     async def test_agent_with_unavailable_tool(self):
@@ -337,4 +362,4 @@ class TestSDKErrorHandling:
 
         # Agent should respond that it can't do this
         assert result is not None
-        assert len(result) > 0
+        assert len(result.answer) > 0

@@ -24,7 +24,17 @@ from cuga.backend.cuga_graph.nodes.task_decomposition_planning.task_decompositio
 from cuga.config import settings
 
 
-# from browsergym.core.env import BrowserEnv
+class ToolCallRecord(BaseModel):
+    """Record of a tool call for tracking purposes."""
+
+    name: str = Field(..., description="The tool name as used by the agent")
+    operation_id: Optional[str] = Field(None, description="Original OpenAPI operationId (if available)")
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments passed to the tool")
+    result: Optional[Any] = Field(None, description="Result returned by the tool")
+    app_name: Optional[str] = Field(None, description="Name of the app/server the tool belongs to")
+    timestamp: Optional[str] = Field(None, description="ISO timestamp when the call was made")
+    duration_ms: Optional[float] = Field(None, description="Duration of the call in milliseconds")
+    error: Optional[str] = Field(None, description="Error message if the call failed")
 
 
 class VariableMetadata:
@@ -958,6 +968,9 @@ class AgentState(BaseModel):
     cuga_lite_metadata: Optional[Dict[str, Any]] = Field(
         default_factory=dict
     )  # Metadata for CugaLite subgraph execution
+    tool_calls: List[Dict[str, Any]] = Field(
+        default_factory=list
+    )  # List of tracked tool calls (when track_tool_calls is enabled)
 
     @property
     def variables_manager(self) -> 'StateVariablesManager':

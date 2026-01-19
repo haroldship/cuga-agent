@@ -225,7 +225,8 @@ async def test_load_policies_from_json_and_match(agent):
         thread_id = f"test_{uuid.uuid4().hex[:8]}"
 
         try:
-            response = await agent.invoke(utterance, thread_id=thread_id)
+            result = await agent.invoke(utterance, thread_id=thread_id)
+            response = result.answer  # Extract answer from InvokeResult
             logger.info(f"   Agent response: {response[:200]}...")
 
             # Check if response indicates a policy match based on expected behavior
@@ -331,9 +332,10 @@ async def test_load_policies_from_json_and_match(agent):
 
                                     # Resume execution using invoke with None and action_response
                                     logger.info("   ▶️  Resuming execution after approval...")
-                                    response_after_approval = await agent.invoke(
+                                    result_after_approval = await agent.invoke(
                                         None, thread_id=thread_id, action_response=approval
                                     )
+                                    response_after_approval = result_after_approval.answer
                                     logger.info(
                                         f"   Agent response after approval: {response_after_approval[:200]}..."
                                     )
