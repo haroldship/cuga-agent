@@ -38,8 +38,8 @@ services:
       auth:
         type: oauth2
   - phone:
-      description: Provides functionalities related to phone services, which could include making calls, sending SMS messages, managing contacts, relationships status, friends, coworkers, family, or accessing call logs. Contact lookup service, resolve **any proper-name PERSON** (“Alex”, “David”, “Ji”) or relationship (siblings, roommates, coworkers, friends, family) for other apps.
-  #      Manages contact book and relationship labels (friends, family, roommates, coworkers); resolves names and phone numbers for other apps.
+      description: Provides phone service functionalities including making calls, sending and retrieving SMS messages, searching contacts and their relationships, retrieving contact details (phone numbers, email addresses, names, etc.), managing relationship labels (friends, family, roommates, coworkers), accessing call logs, setting alarms, and searching voice messages, which could include making calls, sending SMS messages, managing contacts, relationships status, friends, coworkers, family, or accessing call logs. Contact lookup service, resolve **any proper-name PERSON** (“Alex”, “David”, “Ji”) or relationship (siblings, roommates, coworkers, friends, family) for other apps. Provides contact details including phone numbers, email addresses, and other information.
+  #      Manages contact book and relationship labels (friends, family, roommates, coworkers); searches contacts and relationships; retrieves contact details (phone, email, name, etc.); sends and retrieves messages; sets alarms; searches voice messages.
       url: http://localhost:9000/phone/openapi.json
       auth:
         type: oauth2

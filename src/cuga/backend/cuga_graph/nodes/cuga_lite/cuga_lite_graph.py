@@ -68,6 +68,7 @@ from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
+from cuga.backend.cuga_graph.nodes.task_decomposition_planning.analyze_task import TaskAnalyzer
 from cuga.backend.activity_tracker.tracker import ActivityTracker, Step
 from cuga.backend.llm.models import LLMManager
 from cuga.backend.cuga_graph.state.agent_state import AgentState
@@ -343,7 +344,7 @@ async def create_find_tools_tool(
         """Search for relevant tools from the connected applications based on a natural language query.
 
         Args:
-            query: Natural language description of what you want to accomplish
+            query: Natural language query describing what tools are needed to accomplish the task can include also which parameters are needed or the output expected
             app_name: Name of a specific app to filter tools from. Only searches tools from that app.
 
         Returns:
@@ -528,11 +529,26 @@ def create_cuga_lite_graph(
             if state.sub_task_app:
                 # Specific app selected - filter tools to only this app
                 all_apps = await base_tool_provider.get_apps()
-                apps_for_prompt = [app for app in all_apps if app.name == state.sub_task_app]
+                # add here the implementation of force_
+                force_lite_apps = getattr(settings.advanced_features, 'force_lite_mode_apps', [])
+                if force_lite_apps:
+                    allowed_apps_names = list(set([state.sub_task_app] + force_lite_apps))
+                    # call authenticate_apps for the allowed apps
+                    if settings.advanced_features.benchmark == "appworld":
+                        await TaskAnalyzer.call_authenticate_apps(force_lite_apps)
+                    apps_for_prompt = [app for app in all_apps if app.name in allowed_apps_names]
+                else:
+                    apps_for_prompt = [app for app in all_apps if app.name == state.sub_task_app]
                 # Get only tools for this specific app
-                tools_for_execution = await base_tool_provider.get_tools(state.sub_task_app)
-                app_to_tools_map[state.sub_task_app] = tools_for_execution
-                logger.info(f"Filtered to {len(tools_for_execution)} tools for app '{state.sub_task_app}'")
+                tools_for_execution = []
+                for app in apps_for_prompt:
+                    current_tools_for_execution = await base_tool_provider.get_tools(app.name)
+                    app_to_tools_map[app.name] = current_tools_for_execution
+                    tools_for_execution.extend(current_tools_for_execution)
+
+                logger.info(
+                    f"Filtered to {len(tools_for_execution)} tools for {len(apps_for_prompt)} identified apps"
+                )
             elif state.api_intent_relevant_apps:
                 # Filter to API apps
                 all_apps = await base_tool_provider.get_apps()
@@ -991,9 +1007,11 @@ def create_cuga_lite_graph(
                         logger.warning(f"Reflection failed: {e}")
                         reflection_output = ""
 
-                execution_message_content = f"Execution output preview:\n{output.strip()[:2500]}{'...' if len(output.strip()) > 2500 else ''} Execution output:\n{output}"
+                execution_message_content = f"Execution output preview:\n{output.strip()[:3500]}{'...' if len(output.strip()) > 3500 else ''} Execution output:\n{output}"
                 if reflection_output:
-                    execution_message_content = f"{reflection_output}\n\n{execution_message_content}"
+                    execution_message_content = (
+                        f"{execution_message_content}\n\n---\n\nSummary:\n{reflection_output}"
+                    )
 
                 tracker.collect_step(
                     step=Step(
