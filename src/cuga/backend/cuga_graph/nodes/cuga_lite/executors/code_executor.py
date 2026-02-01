@@ -13,6 +13,28 @@ from .docker import DockerExecutor
 from .base_executor import BaseExecutor, RemoteExecutor
 
 
+def format_execution_output(output: str, max_length: Optional[int] = None) -> str:
+    """
+    Format and trim execution output to prevent token overflow.
+
+    Args:
+        output: Raw execution output
+        max_length: Maximum length for output (uses settings if None)
+
+    Returns:
+        Formatted execution output string
+    """
+    if max_length is None:
+        max_length = settings.advanced_features.execution_output_max_length
+
+    output_trimmed = output.strip()
+
+    if len(output_trimmed) > max_length:
+        return f"{output_trimmed[:max_length]}...\n\n[Output trimmed to {max_length} chars]"
+    else:
+        return output_trimmed
+
+
 class CodeExecutor:
     """Unified interface for executing Python code with tools in different modes."""
 
@@ -117,6 +139,10 @@ class CodeExecutor:
         keep_last_n = settings.advanced_features.code_executor_keep_last_n
         new_vars = VariableUtils.limit_variables_to_keep(new_vars, keep_last_n)
 
+        # Format/trim the output before adding variables
+        result = format_execution_output(result)
+
+        # Add variables summary to the formatted output
         result = VariableUtils.add_variables_to_manager(new_vars, state.variables_manager, result)
 
         return result, new_vars

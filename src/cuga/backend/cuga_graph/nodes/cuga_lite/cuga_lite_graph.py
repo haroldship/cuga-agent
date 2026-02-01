@@ -958,9 +958,8 @@ def create_cuga_lite_graph(
                 tracker.collect_step(step=Step(name="User_output", data=output))
                 tracker.collect_step(step=Step(name="User_output_variables", data=json.dumps(new_vars)))
 
-                logger.debug(
-                    f"\n\n------\n\n📝 Execution output:\n\n {output.strip()[:2000]}{'...' if len(output.strip()) > 2000 else ''} \n\n------\n\n"
-                )
+                # Output is already formatted and trimmed by code_executor
+                logger.debug(f"\n\n------\n\n📝 Execution output:\n\n{output}\n\n------\n\n")
 
                 # Update variables using CugaLiteState's variables_manager
                 # This automatically updates state.variables_storage
@@ -1007,7 +1006,8 @@ def create_cuga_lite_graph(
                         logger.warning(f"Reflection failed: {e}")
                         reflection_output = ""
 
-                execution_message_content = f"Execution output preview:\n{output.strip()[:3500]}{'...' if len(output.strip()) > 3500 else ''} Execution output:\n{output}"
+                # Output is already formatted by code_executor
+                execution_message_content = f"Execution output:\n{output}"
                 if reflection_output:
                     execution_message_content = (
                         f"{execution_message_content}\n\n---\n\nSummary:\n{reflection_output}"
