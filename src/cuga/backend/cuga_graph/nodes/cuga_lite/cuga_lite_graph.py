@@ -59,6 +59,7 @@ from typing import Any, Optional, Sequence, Dict, List, Tuple
 from loguru import logger
 from pydantic import BaseModel, Field
 
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from langchain_core.runnables import RunnableConfig
@@ -308,7 +309,7 @@ class Todo(BaseModel):
     text: str = Field(..., description="The task description")
     status: str = Field(
         default="pending",
-        description="Status of the todo: 'pending' or 'completed'",
+        description="Status of the todo: 'pending', 'in_progress', or 'completed'",
     )
 
 
@@ -374,14 +375,17 @@ async def create_find_tools_tool(
     )
 
 
-async def create_update_todos_tool() -> StructuredTool:
+async def create_update_todos_tool(agent_state: Optional['AgentState'] = None) -> StructuredTool:
     """Create a create_update_todos StructuredTool for managing task todos.
+
+    Args:
+        agent_state: Optional AgentState to store todos for prompt updates
 
     Returns:
         StructuredTool configured for creating and updating todos
     """
 
-    async def create_update_todos_func(input_data) -> TodosOutput:
+    async def create_update_todos_func(input_data) -> str:
         """Create or update a list of todos for complex multi-step tasks.
 
         Use this tool when you have a complex task that requires multiple steps.
@@ -394,7 +398,7 @@ async def create_update_todos_tool() -> StructuredTool:
                        - A list directly: [...] (will be wrapped in {"todos": [...]})
 
         Returns:
-            The current list of todos with their status
+            Simple confirmation message
         """
         # Handle different input types
         if isinstance(input_data, TodosInput):
@@ -423,13 +427,20 @@ async def create_update_todos_tool() -> StructuredTool:
                 # Last resort: wrap in a list
                 todos_list = [Todo(**input_data) if isinstance(input_data, dict) else input_data]
 
-        return TodosOutput(todos=todos_list)
+        # Store todos in agent_state if available
+        logger.info(
+            f"🔍 DEBUG create_update_todos: agent_state type = {type(agent_state).__name__ if agent_state else 'None'}"
+        )
+        logger.info(f"🔍 DEBUG create_update_todos: agent_state exists = {agent_state is not None}")
+
+        return "Todos have been updated"
 
     return StructuredTool.from_function(
         func=create_update_todos_func,
         name="create_update_todos",
-        description="Create or update a list of todos for complex multi-step tasks. Use this when you have a task that requires more than one step. You can pass either: (1) A list directly: create_update_todos([{'text': '...', 'status': 'pending'}, ...]) or (2) A dict with 'todos' key: create_update_todos({'todos': [{'text': '...', 'status': 'pending'}, ...]}). Each todo dict should have 'text' (task description) and 'status' ('pending' or 'completed').",
+        description="Create or update a list of todos for complex multi-step tasks. Use this when you have a task that requires more than one step. You can pass either: (1) A list directly: create_update_todos([{'text': '...', 'status': 'pending'}, ...]) or (2) A dict with 'todos' key: create_update_todos({'todos': [{'text': '...', 'status': 'pending'}, ...]}). Each todo dict should have 'text' (task description) and 'status' ('pending', 'in_progress', or 'completed'). Returns a simple confirmation message.",
         args_schema=TodosInput,
+        return_direct=False,
     )
 
 
@@ -606,7 +617,8 @@ def create_cuga_lite_graph(
 
             # Add create_update_todos tool for complex task management if enabled
             if settings.advanced_features.enable_todos:
-                todos_tool = await create_update_todos_tool()
+                # Pass the CugaLiteState so todos updates are reflected in the graph state
+                todos_tool = await create_update_todos_tool(agent_state=state)
                 tools_for_prompt.append(todos_tool)
                 # Add to tools context for sandbox execution
                 tools_context_dict['create_update_todos'] = make_tool_awaitable(todos_tool.func)
@@ -654,6 +666,7 @@ def create_cuga_lite_graph(
 
             # Create prompt dynamically
             dynamic_prompt = prompt
+
             if not dynamic_prompt:
                 dynamic_prompt = create_mcp_prompt(
                     tools_for_prompt,

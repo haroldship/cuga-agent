@@ -128,7 +128,16 @@ class CodeExecutor:
             executor = cls._get_local_executor()
             result = executor.format_error(e)
 
-        new_vars = VariableUtils.filter_new_variables(_locals, original_keys)
+        # Variables that should always be included even if they existed before
+        # This ensures stateful variables get updated when reassigned across execution steps
+        # Includes:
+        # - 'todos': Stateful task list that gets updated incrementally
+        # - Generic output variables: Common names for final results that may be reassigned
+        always_include_keys = {'todos', 'result', 'results', 'output', 'outputs'}
+
+        new_vars = VariableUtils.filter_new_variables(
+            _locals, original_keys, always_include_keys=always_include_keys
+        )
 
         new_vars = VariableUtils.reorder_variables_by_print(new_vars, code)
 
