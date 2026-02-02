@@ -23,17 +23,20 @@ from cuga.config import settings
 DEMO_COMMAND = ["uv", "run", "demo"]  # Assuming demo runs on port 7860 as per settings.toml
 REGISTRY_COMMAND = ["uv", "run", "registry"]  # Assuming default port for registry
 DIGITAL_SALES_MCP_COMMAND = ["uv", "run", "digital_sales_openapi"]  # Digital sales MCP server
+MEMORY_GRACEFUL_SHUTDOWN_TIMEOUT = os.environ.get(
+    "CUGA_MEMORY_SHUTDOWN_TIMEOUT", "30"
+)  # Allow time to shutdown because of background process
 MEMORY_COMMAND = [
     "uv",
     "run",
-    "--group",
-    "memory",
     "uvicorn",
     "cuga.backend.memory.agentic_memory.main:app",
     "--host",
     "127.0.0.1",
     "--port",
     str(settings.server_ports.memory),
+    "--timeout-graceful-shutdown",
+    MEMORY_GRACEFUL_SHUTDOWN_TIMEOUT,
 ]
 
 # Server URL
@@ -44,6 +47,10 @@ os.environ["MCP_SERVERS_FILE"] = os.path.join(os.path.dirname(__file__), "config
 os.environ["CUGA_TEST_ENV"] = "true"
 os.environ["DYNACONF_ADVANCED_FEATURES__TRACKER_ENABLED"] = "true"
 os.environ["DYNACONF_POLICY__ENABLED"] = "false"
+os.environ.setdefault(
+    "DYNACONF_SERVER_PORTS__DIGITAL_SALES_API",
+    str(settings.server_ports.digital_sales_api),
+)
 
 
 def get_preexec_fn():
@@ -56,7 +63,7 @@ def get_preexec_fn():
     return None
 
 
-def get_subprocess_env():
+def get_subprocess_env(overrides: Optional[Dict[str, Optional[str]]] = None):
     """Returns environment dict for subprocess with UTF-8 encoding on Windows.
     This ensures that subprocesses can handle Unicode characters (like emojis)
     that FastAPI's dev server prints.
@@ -65,6 +72,12 @@ def get_subprocess_env():
     # On Windows, set UTF-8 encoding to handle Unicode characters in subprocess output
     if platform.system().lower().startswith("win"):
         env["PYTHONIOENCODING"] = "utf-8"
+    if overrides:
+        for key, value in overrides.items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
     return env
 
 
@@ -118,8 +131,9 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
     # Override this in subclasses to set specific environment variables
     test_env_vars = {}
     enable_memory_service = False
+    memory_service_env_vars: Dict[str, Optional[str]] = {}
 
-    def _kill_process_by_port(self, port: int, service_name: str = "service") -> bool:
+    def _kill_process_by_port(self, port: int, service_name: str = "service", timeout: float = 5) -> bool:
         """
         Kill processes listening on a specific port.
         Uses optimized methods per platform for better performance.
@@ -127,6 +141,7 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
         Args:
             port: The port number to check
             service_name: Name of the service for logging purposes
+            timeout: Seconds to wait for graceful termination before SIGKILL
 
         Returns:
             True if any processes were killed, False otherwise
@@ -169,7 +184,7 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
             # On Unix/Linux, use lsof which is fast
             try:
                 result = subprocess.run(
-                    ["lsof", "-ti", f":{port}"],
+                    ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -191,7 +206,9 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
 
         return killed_any
 
-    def _kill_process_by_port_psutil(self, port: int, service_name: str = "service") -> bool:
+    def _kill_process_by_port_psutil(
+        self, port: int, service_name: str = "service", timeout: float = 5
+    ) -> bool:
         """
         Fallback method using psutil (slower but more reliable).
         Only used when platform-specific methods fail.
@@ -214,7 +231,7 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
                                 )
                                 proc.terminate()
                                 try:
-                                    proc.wait(timeout=5)
+                                    proc.wait(timeout=timeout)
                                     print(f"{service_name} process {proc.info['pid']} terminated gracefully")
                                 except psutil.TimeoutExpired:
                                     print(
@@ -418,6 +435,16 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
             else:
                 os.environ[key] = value
                 print(f"  Set {key} = {value}")
+        # Refresh Dynaconf settings to pick up per-test env overrides (e.g. memory provider).
+        settings.reload()
+        # Reset memory singleton so it re-initializes with updated settings.
+        try:
+            from cuga.backend.memory.memory import Memory
+
+            Memory._instance = None
+            Memory._initialized = False
+        except Exception:
+            pass
 
         # Open log files for writing with UTF-8 encoding
         self.registry_log_handle = open(
@@ -456,7 +483,7 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
                 stdout=self.memory_log_handle,
                 stderr=subprocess.STDOUT,  # Redirect stderr to stdout
                 text=True,
-                env=get_subprocess_env(),  # Pass the updated environment with UTF-8 encoding on Windows
+                env=get_subprocess_env(self.memory_service_env_vars),
                 preexec_fn=os.setsid,
             )
             print(f"Memory service process started with PID: {self.memory_process.pid}")

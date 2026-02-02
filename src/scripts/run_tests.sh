@@ -48,7 +48,7 @@ run_pytest() {
 # Exit codes: 0=success, 1-4=failures, 5=no tests collected (treat as success)
 run_pytest_with_memory() {
     # Sync memory dependency groups before running tests
-    uv sync --group memory
+    uv sync --extra memory
     uv run pytest "$@" -v
     local ec=$?
     echo "pytest (with memory) $* exited with code $ec"
@@ -73,6 +73,10 @@ else
     run_pytest ./src/cuga/backend/cuga_graph/policy/tests
     echo "Running SDK integration tests..."
     run_pytest ./src/cuga/sdk_core/tests/
+    echo "Running memory tests..."
+    run_pytest_with_memory ./src/system_tests/unit/test_cli.py
+    run_pytest_with_memory ./src/system_tests/e2e/test_memory_integration.py
+    run_pytest_with_memory ./src/system_tests/e2e/balanced_test_memory.py
     echo "Running stability tests..."
     # Force unbuffered output for Python to ensure all logs are captured
     PYTHONUNBUFFERED=1 uv run run_stability_tests.py --method local

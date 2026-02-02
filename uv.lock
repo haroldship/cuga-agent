@@ -566,6 +566,10 @@ dependencies = [
 evaluation = [
     { name = "rapidfuzz" },
 ]
+memory = [
+    { name = "mem0ai", extra = ["extras"] },
+    { name = "pymilvus", extra = ["milvus-lite"] },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -588,10 +592,6 @@ e2b = [
 ]
 google-genai = [
     { name = "langchain-google-genai" },
-]
-memory = [
-    { name = "mem0ai", extra = ["extras"] },
-    { name = "pymilvus", extra = ["milvus-lite"] },
 ]
 sandbox = [
     { name = "llm-sandbox" },
@@ -618,8 +618,10 @@ requires-dist = [
     { name = "langgraph" },
     { name = "loguru" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.23.0" },
+    { name = "mem0ai", extras = ["extras"], marker = "extra == 'memory'" },
     { name = "playwright", specifier = "==1.49.0" },
     { name = "psutil", specifier = ">=7.0.0" },
+    { name = "pymilvus", extras = ["milvus-lite"], marker = "extra == 'memory'", specifier = ">=2.5.11" },
     { name = "pymilvus", extras = ["milvus-lite", "model"], specifier = ">=2.6.4" },
     { name = "python-dotenv" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -630,7 +632,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15.3" },
     { name = "uvicorn" },
 ]
-provides-extras = ["evaluation"]
+provides-extras = ["evaluation", "memory"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -650,10 +652,6 @@ dev = [
 ]
 e2b = [{ name = "e2b-code-interpreter", specifier = ">=2.4.1" }]
 google-genai = [{ name = "langchain-google-genai", specifier = ">=2.0.11" }]
-memory = [
-    { name = "mem0ai", extras = ["extras"], specifier = ">=0.1.108" },
-    { name = "pymilvus", extras = ["milvus-lite"], specifier = ">=2.5.11" },
-]
 sandbox = [{ name = "llm-sandbox", specifier = ">=0.1.3" }]
 
 [[package]]

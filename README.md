@@ -745,7 +745,7 @@ instruction_set = "default"  # or any instruction set above
 <details>
 <summary><em style="color: #666;"> 📹 Optional: Run with memory</em></summary>
 
-1. Install memory dependencies `uv sync --group memory`
+1. Install memory dependencies `uv sync --extra memory`
 1. Change `enable_memory = true` in `setting.toml`
 2. Run `cuga start memory`
 

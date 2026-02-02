@@ -72,7 +72,7 @@
     },
     {
       "name": "Cuga Demo",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "fastapi",
       "envFile": "${workspaceFolder}/.env",
@@ -82,7 +82,12 @@
         "PYTHONUNBUFFERED": "1"
       },
       "console": "integratedTerminal",
-      "python": "${workspaceFolder}/.venv/bin/python"
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "stopOnEntry": false,
+      "justMyCode": false,
+      "redirectOutput": true,
+      "showReturnValue": true,
+      "subProcess": true
     }
   ]
 }

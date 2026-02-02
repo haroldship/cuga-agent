@@ -39,7 +39,10 @@ dependencies = [
 
 [project.optional-dependencies]
 evaluation = ["rapidfuzz"]
-
+memory = [
+    "pymilvus[milvus_lite]>=2.5.11",
+    "mem0ai[extras]"
+]
 
 [project.urls]
 Homepage = "https://cuga.dev"
@@ -117,7 +120,6 @@ sandbox = [
 e2b = [
     "e2b-code-interpreter>=2.4.1"
 ]
-memory = [
-    "pymilvus[milvus_lite]>=2.5.11",
-    "mem0ai[extras]>=0.1.108"
-]
+
+[tool.pytest.ini_options]
+anyio_mode = "auto"

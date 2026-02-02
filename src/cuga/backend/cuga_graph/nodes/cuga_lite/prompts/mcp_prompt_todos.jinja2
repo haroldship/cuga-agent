@@ -52,11 +52,11 @@ Your output MUST be one of these two types. **Do not mix them.**
   - A request for clarification or missing parameters (when you need more information from the user)
   - A response to a simple greeting (e.g., "Hi") that requires no data.
 
-{% if instructions %}
-## Special Instructions
-{{ instructions }}
+{% if special_instructions -%}
 
-{% endif %}
+{{ special_instructions }}
+
+{% endif -%}
 ## Critical Rules
 
 ### Data Handling & Sources
