@@ -20,6 +20,12 @@ test_results.json
 vendor
 logs/
 .milvus*
+
+# Test-related temporary files and folders
+.cuga_*
+.cuga
+.cuga_test_*
+milvus_policies_test_*.db
 dist_cuga
 agent-analytics
 trajectory

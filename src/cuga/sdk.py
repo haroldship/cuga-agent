@@ -180,58 +180,65 @@ class PoliciesManager:
                 self._fs_sync = PolicyFilesystemSync(cuga_folder=self._agent.cuga_folder)
                 logger.debug(f"Initialized filesystem sync for {self._agent.cuga_folder}")
 
-            # Reset/clear all existing policies if requested
-            if self._agent._reset_policy_storage:
-                try:
-                    logger.info("Resetting policy storage - clearing all existing policies")
-                    await self.clear()
-                    logger.info("✅ Policy storage reset complete")
-                except Exception as e:
-                    logger.error(f"Failed to reset policy storage: {e}")
-                    raise e
+        # Reset/clear all existing policies if requested (must be outside the init block)
+        # This ensures reset works even when policy system is already initialized
+        # Only reset ONCE during initialization, then clear the flag
+        if self._agent._reset_policy_storage:
+            try:
+                logger.info("Resetting policy storage - clearing all existing policies")
+                await self.clear()
+                logger.info("✅ Policy storage reset complete")
+                # Clear the flag so we don't reset again on subsequent calls
+                self._agent._reset_policy_storage = False
+            except Exception as e:
+                logger.error(f"Failed to reset policy storage: {e}")
+                raise e
 
-            # Auto-load policies from .cuga folder if enabled
-            if self._agent._auto_load_policies:
-                try:
-                    # Resolve to absolute path for clarity in logs
-                    folder_path = os.path.abspath(self._agent.cuga_folder)
-                    cwd = os.getcwd()
+        # Auto-load policies from .cuga folder if enabled
+        # BUT skip auto-load if we just reset the storage (to keep it clean)
+        if self._agent._auto_load_policies and not self._agent._reset_policy_storage:
+            try:
+                # Resolve to absolute path for clarity in logs
+                import os
 
-                    logger.debug(f"Checking for policy folder: {self._agent.cuga_folder}")
-                    logger.debug(f"  Current working directory: {cwd}")
-                    logger.debug(f"  Resolved absolute path: {folder_path}")
+                folder_path = os.path.abspath(self._agent.cuga_folder)
+                cwd = os.getcwd()
 
-                    if os.path.exists(folder_path):
-                        await self.load_from_folder(self._agent.cuga_folder)
-                        logger.info(
-                            f"Auto-loaded policies from {self._agent.cuga_folder} (resolved: {folder_path})"
+                logger.debug(f"Checking for policy folder: {self._agent.cuga_folder}")
+                logger.debug(f"  Current working directory: {cwd}")
+                logger.debug(f"  Resolved absolute path: {folder_path}")
+
+                if os.path.exists(folder_path):
+                    await self.load_from_folder(self._agent.cuga_folder)
+                    logger.info(
+                        f"Auto-loaded policies from {self._agent.cuga_folder} (resolved: {folder_path})"
+                    )
+
+                    # Validate and sync: ensure filesystem and storage are in sync
+                    if self._fs_sync:
+                        sync_result = await self._validate_and_sync(
+                            self._agent._policy_system.storage, folder_path
                         )
-
-                        # Validate and sync: ensure filesystem and storage are in sync
-                        if self._fs_sync:
-                            sync_result = await self._validate_and_sync(
-                                self._agent._policy_system.storage, folder_path
+                        if (
+                            sync_result['removed']
+                            or sync_result['added_to_storage']
+                            or sync_result['added_to_filesystem']
+                        ):
+                            logger.info(
+                                f"Sync validation complete: "
+                                f"removed={sync_result['removed']}, "
+                                f"added_to_storage={sync_result['added_to_storage']}, "
+                                f"added_to_filesystem={sync_result['added_to_filesystem']}"
                             )
-                            if (
-                                sync_result['removed']
-                                or sync_result['added_to_storage']
-                                or sync_result['added_to_filesystem']
-                            ):
-                                logger.info(
-                                    f"Sync validation complete: "
-                                    f"removed={sync_result['removed']}, "
-                                    f"added_to_storage={sync_result['added_to_storage']}, "
-                                    f"added_to_filesystem={sync_result['added_to_filesystem']}"
-                                )
-                    else:
-                        logger.warning(
-                            f"Policy folder not found: {self._agent.cuga_folder} (resolved: {folder_path})"
-                        )
-                        logger.warning(f"  Current directory: {cwd}")
-                        logger.warning("  Skipping auto-load")
-                except Exception as e:
-                    logger.error(f"Failed to auto-load policies from {self._agent.cuga_folder}: {e}")
-                    raise e
+                else:
+                    logger.warning(
+                        f"Policy folder not found: {self._agent.cuga_folder} (resolved: {folder_path})"
+                    )
+                    logger.warning(f"  Current directory: {cwd}")
+                    logger.warning("  Skipping auto-load")
+            except Exception as e:
+                logger.error(f"Failed to auto-load policies from {self._agent.cuga_folder}: {e}")
+                raise e
 
         return self._agent._policy_system
 
@@ -868,10 +875,14 @@ class PoliciesManager:
             await agent.policies.clear()
             ```
         """
-        policy_system = await self._ensure_policy_system()
-        if policy_system is None:
-            logger.warning("Policy system is disabled - skipping clear")
-            return False
+        # Check if policy system is already initialized to avoid recursion
+        if hasattr(self._agent, '_policy_system') and self._agent._policy_system is not None:
+            policy_system = self._agent._policy_system
+        else:
+            policy_system = await self._ensure_policy_system()
+            if policy_system is None:
+                logger.warning("Policy system is disabled - skipping clear")
+                return False
 
         try:
             # Get all policies
@@ -957,11 +968,15 @@ class PoliciesManager:
         """
         from cuga.backend.cuga_graph.policy.folder_loader import load_policies_from_folder
 
-        # Ensure policy system is initialized BEFORE loading
-        policy_system = await self._ensure_policy_system()
-        if policy_system is None:
-            logger.warning("Policy system is disabled - skipping load_from_folder")
-            return {"count": 0, "errors": ["Policy system is disabled"], "files": []}
+        # Check if policy system is already initialized to avoid recursion
+        if hasattr(self._agent, '_policy_system') and self._agent._policy_system is not None:
+            policy_system = self._agent._policy_system
+        else:
+            # Ensure policy system is initialized BEFORE loading
+            policy_system = await self._ensure_policy_system()
+            if policy_system is None:
+                logger.warning("Policy system is disabled - skipping load_from_folder")
+                return {"count": 0, "errors": ["Policy system is disabled"], "files": []}
 
         # Verify storage is connected
         if not hasattr(policy_system, 'storage') or policy_system.storage is None:
