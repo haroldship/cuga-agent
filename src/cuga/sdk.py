@@ -75,6 +75,7 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.runnables import RunnableConfig
 
 if TYPE_CHECKING:
     pass
@@ -1379,6 +1380,7 @@ class CugaAgent:
         # Create custom callback node for SDK (simpler than full CugaLiteNode)
         async def sdk_callback_node(
             state: AgentState,
+            config: Optional[RunnableConfig] = None,
         ) -> Command[Literal['FinalAnswerAgent', 'SuggestHumanActions', 'CugaLiteSubgraph']]:
             """Process results after CugaLite subgraph execution (SDK version)."""
             logger.info("SDK callback node - processing subgraph results")
@@ -1423,6 +1425,11 @@ class CugaAgent:
                     update=state.model_dump(),
                     goto=NodeNames.SUGGEST_HUMAN_ACTIONS,
                 )
+
+            # Check for OutputFormatter policies before finalizing response
+            from cuga.backend.cuga_graph.policy.output_formatter_utils import apply_output_formatter_policies
+
+            await apply_output_formatter_policies(state, config, context="SDK Callback")
 
             # Otherwise, route to FinalAnswerAgent
             # Set sender to CugaLite so FinalAnswerAgent handles it properly (see final_answer.py line 106)
