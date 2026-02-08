@@ -59,10 +59,24 @@ run_pytest_with_memory() {
     fi
 }
 
+# Helper function to run pytest with e2b dependencies installed
+# Exit codes: 0=success, 1-4=failures, 5=no tests collected (treat as success)
+run_pytest_with_e2b() {
+    uv sync --extra e2b
+    uv run pytest "$@" -v
+    local ec=$?
+    echo "pytest (with e2b) $* exited with code $ec"
+    # Exit code 5 means no tests collected, which is not a failure
+    if [ $ec -ne 0 ] && [ $ec -ne 5 ]; then
+        echo "❌ Test failed! Exiting..."
+        exit 1
+    fi
+}
+
 echo "Running unit tests (registry + variables manager + local sandbox + E2B lite)..."
 run_pytest ./src/cuga/backend/tools_env/registry/tests/
 run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
-run_pytest ./src/cuga/backend/cuga_graph/nodes/cuga_lite/executors/tests/
+run_pytest_with_e2b ./src/cuga/backend/cuga_graph/nodes/cuga_lite/executors/tests/
 echo "✅ All unit tests passed!"
 
 # Check for test type flag

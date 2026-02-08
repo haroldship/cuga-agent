@@ -610,7 +610,13 @@ def create_cuga_lite_graph(
                 tools_for_prompt = [find_tool]
                 # Add find_tools to tools context for sandbox execution
                 # Wrap to make awaitable (agent always uses await)
-                tools_context_dict['find_tools'] = make_tool_awaitable(find_tool.func)
+                # Prefer coroutine over func to avoid run_in_executor issues
+                find_tool_func = (
+                    find_tool.coroutine
+                    if hasattr(find_tool, 'coroutine') and find_tool.coroutine
+                    else find_tool.func
+                )
+                tools_context_dict['find_tools'] = make_tool_awaitable(find_tool_func)
                 logger.info(
                     "Exposing only find_tools in prompt (all tools + find_tools available in execution context)"
                 )
@@ -621,7 +627,13 @@ def create_cuga_lite_graph(
                 todos_tool = await create_update_todos_tool(agent_state=state)
                 tools_for_prompt.append(todos_tool)
                 # Add to tools context for sandbox execution
-                tools_context_dict['create_update_todos'] = make_tool_awaitable(todos_tool.func)
+                # Prefer coroutine over func to avoid run_in_executor issues
+                todos_tool_func = (
+                    todos_tool.coroutine
+                    if hasattr(todos_tool, 'coroutine') and todos_tool.coroutine
+                    else todos_tool.func
+                )
+                tools_context_dict['create_update_todos'] = make_tool_awaitable(todos_tool_func)
 
             # Apply tool guide if guides exist in metadata and haven't been applied yet
             # Guides should apply regardless of whether a playbook matched
@@ -651,11 +663,14 @@ def create_cuga_lite_graph(
             # Wrap to make awaitable (agent always uses await)
             for tool in tools_for_execution:
                 # Extract tool function - StructuredTool may use .func, .coroutine, or ._run
+                # IMPORTANT: Prefer coroutine over func to avoid run_in_executor issues
+                # with tools that have async implementations (like MCP tools)
                 tool_func = None
-                if hasattr(tool, 'func') and tool.func:
-                    tool_func = tool.func
-                elif hasattr(tool, 'coroutine') and tool.coroutine:
+                if hasattr(tool, 'coroutine') and tool.coroutine:
+                    # Prefer async coroutine - avoids run_in_executor timeout issues
                     tool_func = tool.coroutine
+                elif hasattr(tool, 'func') and tool.func:
+                    tool_func = tool.func
                 else:
                     tool_func = getattr(tool, '_run', None)
 
