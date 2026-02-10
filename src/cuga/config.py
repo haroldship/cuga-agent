@@ -161,6 +161,9 @@ else:
 default_llm = os.environ.get("AGENT_SETTING_CONFIG", "settings.openai.toml")
 # Remove inline comments (everything after #) and strip quotes/whitespace
 default_llm = default_llm.split('#')[0].strip().strip('"').strip("'").strip()
+# Fall back to default if the env var was set but empty (e.g. missing GitHub secret)
+if not default_llm:
+    default_llm = "settings.openai.toml"
 logger.info("loaded llm settings *{}*".format(default_llm))
 
 # Resolve absolute config file paths
