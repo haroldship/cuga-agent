@@ -305,31 +305,38 @@ class BaseTestServerStream(unittest.IsolatedAsyncioTestCase):
             try:
                 async with httpx.AsyncClient(timeout=1.0) as client:
                     response = await client.get(url)
-                    if response.status_code == 200:
-                        print(f"Server on port {port} is ready!")
+                    # Any HTTP response (even 404) means the server is up and accepting connections.
+                    # Not all servers have a root endpoint that returns 200.
+                    if response.status_code < 500:
+                        print(f"Server on port {port} is ready! (status={response.status_code})")
                         return
+                    # Server error (5xx) — server is starting but not healthy yet, retry
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_interval)
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_interval)
-                else:
-                    error_msg = (
-                        f"{process_name} did not become ready after {max_retries * retry_interval:.1f} seconds. "
-                        f"Please check if the server started correctly on port {port}."
-                    )
-                    # Check process status one last time
-                    if process is not None and process.poll() is not None:
-                        error_msg += f"\n{process_name} process died with return code {process.returncode}"
-                        if log_file and os.path.exists(log_file):
-                            try:
-                                with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
-                                    log_content = f.read()
-                                    if log_content:
-                                        log_lines = log_content.split('\n')
-                                        last_lines = '\n'.join(log_lines[-50:])
-                                        error_msg += f"\n\nLast 50 lines of {process_name} log ({log_file}):\n{last_lines}"
-                            except Exception as e:
-                                error_msg += f"\n\nCould not read log file {log_file}: {e}"
-                    raise TimeoutError(error_msg)
+
+        # Exhausted all retries — build a descriptive error message
+        error_msg = (
+            f"{process_name} did not become ready after {max_retries * retry_interval:.1f} seconds. "
+            f"Please check if the server started correctly on port {port}."
+        )
+        if process is not None and process.poll() is not None:
+            error_msg += f"\n{process_name} process died with return code {process.returncode}"
+            if log_file and os.path.exists(log_file):
+                try:
+                    with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                        log_content = f.read()
+                        if log_content:
+                            log_lines = log_content.split('\n')
+                            last_lines = '\n'.join(log_lines[-50:])
+                            error_msg += (
+                                f"\n\nLast 50 lines of {process_name} log ({log_file}):\n{last_lines}"
+                            )
+                except Exception as e:
+                    error_msg += f"\n\nCould not read log file {log_file}: {e}"
+        raise TimeoutError(error_msg)
 
     def _create_log_files(self):
         """Create log files for demo and registry processes per test method in separate folders."""

@@ -2,19 +2,11 @@ import os
 import subprocess
 import asyncio
 
-from cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor import CodeExecutor
-from cuga.backend.cuga_graph.state.agent_state import AgentState
 from cuga.config import settings, PACKAGE_ROOT
-from cuga.backend.activity_tracker.tracker import ActivityTracker
-from loguru import logger
-
-tracker = ActivityTracker()
 
 
 def run_petstore():
     server_module = "agent/api/example_api_servers/petstore.py"
-    from cuga.config import settings
-
     subprocess.run(
         [
             "uv",
@@ -112,6 +104,12 @@ def run_digital_sales_openapi():
 
 
 async def _test_sandbox_async(remote: bool = False):
+    from cuga.backend.cuga_graph.nodes.cuga_lite.executors.code_executor import CodeExecutor
+    from cuga.backend.cuga_graph.state.agent_state import AgentState
+    from cuga.backend.activity_tracker.tracker import ActivityTracker
+    from loguru import logger
+
+    tracker = ActivityTracker()
     tracker.current_date = "2023-05-18T12:00:00"
 
     if remote:
