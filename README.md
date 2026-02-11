@@ -176,24 +176,6 @@ Experience CUGA's Human-in-the-Loop capabilities where the agent pauses for huma
 
 </details>
 
-<details>
-<summary><em style="color: #666;">🔧 Optional: Local Digital Sales API Setup (only if remote endpoint fails)</em></summary>
-
-> The demo comes pre-configured with the Digital Sales API → [📖 API Docs](https://digitalsales.19pc1vtv090u.us-east.codeengine.appdomain.cloud/docs)
-
-**Only follow these steps if you encounter issues with the remote Digital Sales endpoint:**
-
-```bash
-# Start the Digital Sales API locally on port 8000
-uv run digital_sales_openapi
-
-# Then update ./src/cuga/backend/tools_env/registry/config/mcp_servers.yaml to use localhost:
-# Change the digital_sales URL from the remote endpoint to:
-# http://localhost:8000
-```
-
-</details>
-
 ```bash
 # In terminal, clone the repository and navigate into it
 git clone https://github.com/cuga-project/cuga-agent.git
@@ -210,10 +192,10 @@ uv sync
 echo "OPENAI_API_KEY=your-openai-api-key-here" > .env
 
 # 4. Start the demo
-cuga start demo
+cuga start demo_crm
 
 # Chrome will open automatically at https://localhost:7860
-# then try sending your task to CUGA: 'get top account by revenue from digital sales'
+# then try sending your task to CUGA: 'from contacts.txt show me which users belong to the crm system'
 
 # 5. View agent trajectories (optional)
 cuga viz

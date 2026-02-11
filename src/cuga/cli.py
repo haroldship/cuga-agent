@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -456,6 +457,35 @@ def create_demo_crm_sample_files(workspace_path: str) -> List[str]:
     return created_files
 
 
+def copy_workspace_example_files(workspace_path: str) -> List[str]:
+    """Copy example workspace files from docs/examples/huggingface/ into the workspace.
+
+    Only copies files that don't already exist, so user modifications are preserved.
+    """
+    source_dir = PACKAGE_ROOT.parent.parent / "docs" / "examples" / "huggingface"
+    example_files = ["contacts.txt", "cuga_knowledge.md", "cuga_playbook.md", "email_template.md"]
+    copied: List[str] = []
+
+    if not source_dir.is_dir():
+        logger.warning(f"Example files directory not found: {source_dir}")
+        return copied
+
+    for filename in example_files:
+        src = source_dir / filename
+        dst = os.path.join(workspace_path, filename)
+        if not src.exists():
+            logger.debug(f"Example file not found, skipping: {src}")
+            continue
+        if os.path.exists(dst):
+            logger.debug(f"File already exists, skipping: {dst}")
+            continue
+        shutil.copy2(str(src), dst)
+        logger.info(f"   📄 Copied {filename} → {dst}")
+        copied.append(dst)
+
+    return copied
+
+
 @app.callback()
 def callback(
     verbose: bool = typer.Option(
@@ -555,6 +585,9 @@ def start(
 
     # Handle direct execution services (demo and registry)
     if service == "demo":
+        # Signal to the demo server to open with ?mode=advanced
+        os.environ["CUGA_DEMO_ADVANCED"] = "true"
+
         try:
             # Clean up any existing processes on the ports we need
             logger.info("🧹 Checking for existing processes on required ports...")
@@ -667,6 +700,11 @@ def start(
                 logger.info("✅ cuga_workspace directory created")
             else:
                 logger.info(f"✅ cuga_workspace directory found at {workspace_path}")
+
+            # Copy example workspace files (contacts, knowledge, playbook, email template)
+            copied_files = copy_workspace_example_files(workspace_path)
+            if copied_files:
+                logger.info(f"📦 Copied {len(copied_files)} example file(s) to workspace")
 
             if sample_memory_data:
                 logger.info("📝 Generating sample CRM workspace files...")
